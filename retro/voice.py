@@ -32,6 +32,13 @@ def words_to_int(text):
     return n
 
 
+def _vol(text):
+    n = words_to_int(text)
+    if n is not None and n > 100 and 0 <= n - 200 <= 100:
+        return n - 200  # whisper writes "to fifty" as digits: "250"
+    return n
+
+
 def _i(pattern, action, arg=lambda m: None):
     return (re.compile(pattern), action, arg)
 
@@ -46,7 +53,7 @@ INTENTS = [
     _i(r"(?:turn (?:the )?)?volume down|turn it down|quieter|softer", "volume_down"),
     # "to" is often transcribed as its homophone "two" ("set volume two fifty"),
     # so both are treated as the preposition; backtracking still allows "volume two" -> 2.
-    _i(r"(?:set (?:the )?)?volume(?: to| two)? (.+)", "set_volume", lambda m: words_to_int(m.group(1))),
+    _i(r"(?:set (?:the )?)?volume(?: to| two)? (.+)", "set_volume", lambda m: _vol(m.group(1))),
     # "what's" is often heard as "was"
     _i(r"(?:what(?:'s| is|s)?|was)(?: currently)? playing|what (?:song|track) is this|what is this(?: song)?", "now_playing"),
     _i(r"(?:turn )?shuffle off", "shuffle_off"),
@@ -118,7 +125,7 @@ class Listener:
     following the wake phrase (same breath or within the next 6 seconds)."""
 
     def __init__(self, model_path, wake_phrase, on_command, on_wake=lambda: None,
-                 on_wake_hint=lambda: None, device=None, debug=False):
+                 on_wake_hint=lambda: None, device=None, debug=False, transcriber=None):
         self.model_path = str(model_path)
         self.wake = wake_phrase.lower()
         self.on_command = on_command
@@ -126,10 +133,32 @@ class Listener:
         self.on_wake_hint = on_wake_hint  # fires the instant the wake phrase shows in a partial
         self.device = device  # sounddevice index/name substring, None = default
         self.debug = debug
+        self.transcriber = transcriber  # optional fn(pcm16) -> text (see stt.py)
         self.restart = None  # threading.Event set by the tray to reopen the mic
         self._awaiting_until = 0.0
 
-    def feed_text(self, text, now=None):
+    def _better(self, fallback, audio, awaiting):
+        """Re-transcribe the utterance with Whisper when available. Whisper wins
+        on titles/artists but garbles short commands sometimes ("pause"->"poss"),
+        so prefer whichever transcription actually parses as a command."""
+        if not self.transcriber or audio is None:
+            return fallback
+        try:
+            w = self.transcriber(audio)
+        except Exception:
+            return fallback
+        if self.debug and w:
+            print(f"[whisper] {w}")
+        if not w:
+            return fallback
+        cand = w if awaiting else strip_wake(w, self.wake)
+        if cand and parse(cand):
+            return cand
+        if parse(fallback):
+            return fallback
+        return cand or fallback
+
+    def feed_text(self, text, now=None, audio=None):
         """Route one recognized utterance: command after wake (same breath or
         within 6s of the bare wake phrase)."""
         now = time.time() if now is None else now
@@ -137,11 +166,11 @@ class Listener:
             if not defill(text):
                 return  # pure noise ("the") must not eat the command window
             self._awaiting_until = 0.0
-            self.on_command(text)
+            self.on_command(self._better(text, audio, awaiting=True))
             return
         rest = strip_wake(text, self.wake)
         if rest:
-            self.on_command(rest)
+            self.on_command(self._better(rest, audio, awaiting=False))
         elif rest == "":  # wake phrase alone: next utterance is the command
             self._awaiting_until = now + 6
             self.on_wake()
@@ -172,6 +201,7 @@ class Listener:
                 q.put(bytes(indata))
 
             hinted = False  # one wake hint per utterance
+            utt = bytearray()  # raw audio of the current utterance, for Whisper
             with sd.RawInputStream(samplerate=16000, blocksize=4000,
                                    dtype="int16", channels=1, callback=cb,
                                    device=self.device):
@@ -181,14 +211,19 @@ class Listener:
                     except queue.Empty:
                         continue
                     if not listening.is_set():
+                        utt.clear()
                         continue  # drop audio while muted
+                    utt.extend(data)
+                    del utt[:-16000 * 2 * 20]  # cap at 20s
                     if rec.AcceptWaveform(data):
                         hinted = False
                         text = json.loads(rec.Result()).get("text", "").strip()
+                        audio = bytes(utt)
+                        utt.clear()
                         if self.debug and text:
                             print(f"[heard] {text}")
                         if text:
-                            self.feed_text(text)
+                            self.feed_text(text, audio=audio)
                     elif not hinted:
                         partial = json.loads(rec.PartialResult()).get("partial", "")
                         if strip_wake(partial, self.wake) is not None:

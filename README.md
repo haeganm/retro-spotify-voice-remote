@@ -11,9 +11,14 @@ is already playing on — desktop, phone, speaker.
 ## How it works
 
 There's no music player in here. Spotify Connect's Web API *is* the remote:
-**mic → offline speech recognition ([Vosk](https://alphacephei.com/vosk/)) →
-intent → one HTTPS call to api.spotify.com**. The only network traffic is the
-Spotify API itself.
+**mic → offline speech recognition → intent → one HTTPS call to
+api.spotify.com**. The only network traffic is the Spotify API itself.
+
+Speech is a two-stage hybrid, all offline: [Vosk](https://alphacephei.com/vosk/)
+streams the mic and spots the wake phrase instantly; the command utterance is
+then re-transcribed by [Whisper](https://github.com/SYSTRAN/faster-whisper)
+(base.en, CPU int8, ~0.5s), which is far better at song titles and artist
+names. Whichever transcription parses as a valid command wins.
 
 Song lookup doesn't trust Spotify's #1 hit: candidates from several search
 strategies are ranked by fuzzy similarity to what you actually said, so long
@@ -42,8 +47,8 @@ by tv girl" finds TV Girl, not whatever is popular this week).
    ```
 
 3. First run: paste your app's **Client ID**, approve the browser sign-in once
-   (PKCE — no client secret involved), and let it download the ~130 MB speech
-   model. After that it just runs.
+   (PKCE — no client secret involved), and let it download the speech models
+   (~40 MB Vosk + ~75 MB Whisper). After that it just runs.
 
 Tray menu → **Start with Windows** makes it launch silently at login.
 
@@ -80,15 +85,19 @@ Debug what it hears: `spotify-retro --debug`
 {
   "client_id": "...",
   "wake_phrase": "hey retro",
-  "model": "medium",
+  "model": "small",
   "input_device": null,
-  "sound": true
+  "sound": true,
+  "stt": "whisper",
+  "whisper_model": "base.en"
 }
 ```
 
-- `model`: `"medium"` (~130 MB, default, best accuracy) or `"small"` (~40 MB, low-spec machines)
+- `model`: the Vosk wake-word model - `"small"` (default) or `"medium"`
+- `stt`: `"whisper"` (default) or `"vosk"` to skip Whisper on very weak machines
+- `whisper_model`: `"base.en"` (default, fast) or `"small.en"` (more accurate, ~4x slower)
 - `input_device`: pick a microphone from the tray menu instead of editing this
-- `sound`: the wake-confirmation beep; `false` to disable
+- `sound`: the wake-confirmation chime; `false` to disable
 
 ## Tray menu
 

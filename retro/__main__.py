@@ -8,15 +8,17 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from . import voice
+from . import stt, voice
 from .player import Player
 
 MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/models
     "small": ("vosk-model-small-en-us-0.15", "40 MB"),
     "medium": ("vosk-model-en-us-0.22-lgraph", "130 MB"),
 }
-DEFAULTS = {"wake_phrase": "hey retro", "model": "medium",
-            "input_device": None, "sound": True}
+# Vosk only spots the wake word (small is plenty); Whisper hears the command.
+DEFAULTS = {"wake_phrase": "hey retro", "model": "small",
+            "input_device": None, "sound": True,
+            "stt": "whisper", "whisper_model": "base.en"}
 ICON = Path(__file__).parent / "assets" / "icon.png"
 ICON_ICO = Path(__file__).parent / "assets" / "icon.ico"
 
@@ -154,8 +156,10 @@ def main():
             pass
 
     def on_command(text):
-        intent = voice.parse(text)
-        notify(player.handle(*intent) if intent else f"Didn't catch that: '{text}'")
+        def work():  # off the mic thread: API round trips must not deafen the app
+            intent = voice.parse(text)
+            notify(player.handle(*intent) if intent else f"Didn't catch that: '{text}'")
+        threading.Thread(target=work, daemon=True).start()
 
     listener = voice.Listener(
         model, cfg["wake_phrase"], on_command,
@@ -214,7 +218,18 @@ def main():
         except Exception as e:  # e.g. no microphone: stay in tray but say why
             notify(f"Voice listener stopped: {e}")
 
+    def load_whisper():
+        """Whisper loads in ~5s; commands fall back to Vosk text until then."""
+        if cfg["stt"] != "whisper":
+            return
+        tr = stt.make_transcriber(cfg["whisper_model"])
+        if tr:
+            tr(b"\x00" * 32000)  # warm up the compute graph
+            listener.transcriber = tr
+            print(f"Whisper ({cfg['whisper_model']}) ready")
+
     threading.Thread(target=run_listener, daemon=True).start()
+    threading.Thread(target=load_whisper, daemon=True).start()
 
     print(f'Running in the tray. Say "{cfg["wake_phrase"]}" then a command, '
           f'or "{cfg["wake_phrase"]}, play <song>" in one breath.')

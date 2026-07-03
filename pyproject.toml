@@ -15,6 +15,7 @@ dependencies = [
     "spotipy",
     "pystray",
     "Pillow",
+    "faster-whisper",
 ]
 
 [project.scripts]

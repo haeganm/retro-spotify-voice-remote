@@ -3,3 +3,4 @@ sounddevice
 spotipy
 pystray
 Pillow
+faster-whisper

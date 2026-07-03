@@ -2,6 +2,8 @@
 import difflib
 import random
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import spotipy
 from spotipy.cache_handler import CacheFileHandler
@@ -11,20 +13,33 @@ SCOPES = ("user-modify-playback-state user-read-playback-state "
           "playlist-read-private user-library-read")
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 NO_DEVICE = "No Spotify device found - open Spotify on any device first."
+_POOL = ThreadPoolExecutor(max_workers=4)  # concurrent search variants
 
 
 def _norm(s):
     return re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
 
 
+def _sim(a, b):
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
 def score(query, name, artists=(), popularity=0):
     """Similarity of a heard query to a candidate (0..~1.1). Compares against
-    'title artists' AND title alone (the query may omit the artist), with
-    popularity only as a small tiebreak."""
+    'title artists', title alone (the query may omit the artist), and every
+    'title by artist' reading of the query - so 'brain stew by green day'
+    scores the artist explicitly instead of hoping the concatenation matches.
+    Popularity is only a small tiebreak."""
     q = _norm(query)
-    full = difflib.SequenceMatcher(None, q, _norm(f"{name} {' '.join(artists)}")).ratio()
-    title = difflib.SequenceMatcher(None, q, _norm(name)).ratio()
-    return max(full, title) + popularity / 1000.0
+    title = _norm(name)
+    art = _norm(" ".join(artists))
+    cands = [_sim(q, f"{title} {art}".strip()), _sim(q, title)]
+    parts = query.split(" by ")
+    for i in range(1, len(parts)):
+        t = _norm(" by ".join(parts[:i]))
+        a = _norm(" by ".join(parts[i:]))
+        cands.append(0.6 * _sim(t, title) + 0.4 * _sim(a, art))
+    return max(cands) + popularity / 1000.0
 
 
 def query_variants(query):
@@ -59,24 +74,49 @@ class Player:
 
     # -- helpers --------------------------------------------------------
     def _device(self):
-        """Active device id, transferring playback to the first available if none."""
+        """Active device id (cached briefly - a lookup per command costs a
+        round trip), transferring playback to the first available if none."""
+        ts, dev = getattr(self, "_dev_cache", (0.0, None))
+        if dev and time.monotonic() - ts < 10:
+            return dev
         pb = self.sp.current_playback()
         if pb and pb.get("device"):
-            return pb["device"]["id"]
-        devices = self.sp.devices()["devices"]
-        if not devices:
-            return None
-        dev = devices[0]["id"]
-        self.sp.transfer_playback(dev, force_play=False)
+            dev = pb["device"]["id"]
+        else:
+            devices = self.sp.devices()["devices"]
+            if not devices:
+                return None
+            dev = devices[0]["id"]
+            self.sp.transfer_playback(dev, force_play=False)
+        self._dev_cache = (time.monotonic(), dev)
         return dev
+
+    def _artist_tracks(self, query):
+        """When the query names an artist ('x by green day'), that artist's
+        popular tracks rescue a garbled title STT couldn't spell. (The
+        top-tracks endpoint is 403 for new dev-mode apps; artist-filtered
+        search is allowed and equivalent here.)"""
+        artist = query.rsplit(" by ", 1)[1]
+        try:
+            return self.sp.search(q=f"artist:{artist}", type="track",
+                                  limit=10)["tracks"]["items"]  # >10 is 400 for dev-mode apps
+        except Exception:
+            return []
 
     def _best_track(self, query):
         """Rank up to 10 hits per query variant by fuzzy similarity instead of
-        trusting Spotify's #1 (which favors chart-toppers over exact matches)."""
+        trusting Spotify's #1 (which favors chart-toppers over exact matches).
+        All lookups run concurrently."""
+        variants = list(query_variants(query))
+        futures = [_POOL.submit(self.sp.search, q=q, type="track", limit=10)
+                   for q in variants]
+        top_f = _POOL.submit(self._artist_tracks, query) if " by " in query else None
         cands = {}
-        for q in query_variants(query):
-            for t in self.sp.search(q=q, type="track", limit=10)["tracks"]["items"]:
+        for f in futures:
+            for t in f.result()["tracks"]["items"]:
                 cands[t["uri"]] = t
+        for t in (top_f.result() if top_f else []):
+            cands.setdefault(t["uri"], t)
         if not cands:
             return None
         return max(cands.values(), key=lambda t: score(

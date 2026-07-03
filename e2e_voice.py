@@ -1,17 +1,18 @@
 """E2E recognition check (Windows-only): synthesizes spoken commands with the
-built-in TTS voice, runs them through the real Vosk model + wake word + intent
-parser. Usage: python e2e_voice.py [--model small|medium]
+built-in TTS voice, runs them through the real STT + wake word + intent parser.
+Usage: python e2e_voice.py [--model small|medium] [--stt vosk|whisper]
 """
 import argparse
 import json
 import subprocess
 import sys
 import tempfile
+import time
 import wave
 from pathlib import Path
 
 from retro.__main__ import MODELS, app_dir, ensure_model
-from retro.voice import parse, strip_wake
+from retro.voice import Listener, parse, strip_wake
 
 PHRASES = {
     # name: (spoken text, expected action, expected arg or None to skip check)
@@ -31,6 +32,7 @@ PHRASES = {
     # "mister" transcribes as "mr" - either is a fine search query
     "mrbrightside": ("hey retro play mister brightside by the killers",
                      "play_track", None),
+    "brainstew": ("hey retro play brain stew by green day", "play_track", None),
 }
 
 
@@ -54,12 +56,19 @@ def main():
     if sys.platform != "win32":
         sys.exit("Windows-only (uses the built-in SAPI voice for test audio).")
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", choices=list(MODELS), default="medium")
+    ap.add_argument("--model", choices=list(MODELS), default="small")
+    ap.add_argument("--stt", choices=["vosk", "whisper"], default="whisper")
     args = ap.parse_args()
 
     from vosk import KaldiRecognizer, Model, SetLogLevel
     SetLogLevel(-1)
     model = Model(str(ensure_model(app_dir(), args.model)))
+
+    transcriber = None
+    if args.stt == "whisper":
+        from retro.stt import make_transcriber
+        transcriber = make_transcriber()
+        transcriber(b"\x00" * 32000)  # warm up
 
     tts = Path(tempfile.gettempdir()) / "spotify-retro-e2e"
     tts.mkdir(exist_ok=True)
@@ -69,17 +78,24 @@ def main():
     for name, (_text, want_action, want_arg) in PHRASES.items():
         rec = KaldiRecognizer(model, 16000)
         with wave.open(str(tts / f"{name}.wav")) as w:
-            while chunk := w.readframes(8000):
-                rec.AcceptWaveform(chunk)
-        heard = json.loads(rec.FinalResult()).get("text", "").strip()
-        rest = strip_wake(heard, "hey retro")
+            pcm = w.readframes(w.getnframes())
+        for i in range(0, len(pcm), 16000):
+            rec.AcceptWaveform(pcm[i:i + 16000])
+        vosk_heard = json.loads(rec.FinalResult()).get("text", "").strip()
+        rest = strip_wake(vosk_heard, "hey retro")  # vosk always gates the wake
+        ms = 0
+        if rest and transcriber:  # the real production path
+            lis = Listener("unused", "hey retro", on_command=None, transcriber=transcriber)
+            t0 = time.perf_counter()
+            rest = lis._better(rest, pcm, awaiting=False)
+            ms = (time.perf_counter() - t0) * 1000
         intent = parse(rest) if rest else None
         ok = (rest is not None and intent is not None and intent[0] == want_action
               and (want_arg is None or intent[1] == want_arg))
         failures += not ok
-        print(f"{'OK  ' if ok else 'FAIL'} {name:12} heard={heard!r} -> {intent}")
+        print(f"{'OK  ' if ok else 'FAIL'} {name:12} {ms:4.0f}ms cmd={rest!r} -> {intent}")
 
-    print(f"[{args.model}] {'PASS' if not failures else f'{failures} FAILURES'}")
+    print(f"[{args.model}/{args.stt}] {'PASS' if not failures else f'{failures} FAILURES'}")
     sys.exit(1 if failures else 0)
 
 
