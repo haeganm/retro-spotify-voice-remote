@@ -12,9 +12,11 @@ def normalize(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def make_transcriber(model_name="base.en"):
+def make_transcriber(model_name="base.en", hotwords=None):
     """Return transcribe(pcm16-bytes) -> normalized text, or None if
-    faster-whisper isn't installed."""
+    faster-whisper isn't installed. `hotwords` (e.g. the user's top Spotify
+    artists, comma-separated) biases decoding toward names Whisper would
+    otherwise mangle - 'Yeat' instead of 'beat'."""
     try:
         import numpy as np
         from faster_whisper import WhisperModel
@@ -24,7 +26,8 @@ def make_transcriber(model_name="base.en"):
 
     def transcribe(pcm16):
         audio = np.frombuffer(pcm16, np.int16).astype(np.float32) / 32768.0
-        segments, _ = model.transcribe(audio, language="en", beam_size=5)
+        segments, _ = model.transcribe(audio, language="en", beam_size=5,
+                                       hotwords=hotwords)
         return normalize(" ".join(s.text for s in segments))
 
     return transcribe

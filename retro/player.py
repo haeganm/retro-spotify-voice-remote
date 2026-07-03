@@ -10,7 +10,7 @@ from spotipy.cache_handler import CacheFileHandler
 from spotipy.oauth2 import SpotifyPKCE
 
 SCOPES = ("user-modify-playback-state user-read-playback-state "
-          "playlist-read-private user-library-read")
+          "playlist-read-private user-library-read user-top-read")
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 NO_DEVICE = "No Spotify device found - open Spotify on any device first."
 _POOL = ThreadPoolExecutor(max_workers=4)  # concurrent search variants
@@ -91,6 +91,28 @@ class Player:
         self._dev_cache = (time.monotonic(), dev)
         return dev
 
+    def user_artists(self):
+        """Names of artists this user actually listens to (top + liked),
+        cached for the process lifetime. Used to bias search ranking and
+        Whisper's vocabulary."""
+        arts = getattr(self, "_arts_cache", None)
+        if arts is not None:
+            return arts
+        names = set()
+        try:
+            for a in self.sp.current_user_top_artists(limit=50, time_range="medium_term")["items"]:
+                names.add(a["name"])
+        except Exception:
+            pass
+        try:
+            for it in self.sp.current_user_saved_tracks(limit=50)["items"]:
+                for a in it["track"].get("artists", []):
+                    names.add(a["name"])
+        except Exception:
+            pass
+        self._arts_cache = names
+        return names
+
     def _artist_tracks(self, query):
         """When the query names an artist ('x by green day'), that artist's
         popular tracks rescue a garbled title STT couldn't spell. (The
@@ -119,8 +141,16 @@ class Player:
             cands.setdefault(t["uri"], t)
         if not cands:
             return None
-        return max(cands.values(), key=lambda t: score(
-            query, t["name"], [a["name"] for a in t["artists"]], t.get("popularity", 0)))
+        fav = {_norm(n) for n in self.user_artists()}
+
+        def key(t):
+            s = score(query, t["name"], [a["name"] for a in t["artists"]],
+                      t.get("popularity", 0))
+            if any(_norm(a["name"]) in fav for a in t["artists"]):
+                s += 0.12  # artists you listen to beat sound-alike strangers
+            return s
+
+        return max(cands.values(), key=key)
 
     def _search(self, query, kind):
         items = self.sp.search(q=query, type=kind, limit=5)[kind + "s"]["items"]
@@ -162,16 +192,44 @@ class Player:
     def play_album(self, name):
         return self._play_context(name, "album")
 
-    def play_playlist(self, name):
-        """Your own playlists first (public search can't see private ones),
-        then public search."""
+    def queue_track(self, query):
         dev = self._device()
         if not dev:
             return NO_DEVICE
-        mine = self.sp.current_user_playlists(limit=50)["items"]
+        t = self._best_track(query)
+        if not t:
+            return f"No results for '{query}'"
+        self.sp.add_to_queue(t["uri"], device_id=dev)
+        return f"Queued {t['name']} by {t['artists'][0]['name']}"
+
+    def _my_playlists(self):
+        """All of the user's playlists (paginated), cached for 5 minutes."""
+        ts, pls = getattr(self, "_pl_cache", (0.0, None))
+        if pls is not None and time.monotonic() - ts < 300:
+            return pls
+        pls, res = [], self.sp.current_user_playlists(limit=50)
+        while res:
+            pls += [p for p in res["items"] if p]
+            res = self.sp.next(res) if res.get("next") else None
+        self._pl_cache = (time.monotonic(), pls)
+        return pls
+
+    def play_playlist(self, name):
+        """Your own playlists first (public search can't see private ones),
+        then public search. Playlist names carry emojis and decorations, so
+        containment ('gym' in 'GYM PUMP mix') counts as a strong match."""
+        dev = self._device()
+        if not dev:
+            return NO_DEVICE
+
+        def pl_score(p):
+            s, n = _norm(name), _norm(p["name"])
+            return max(_sim(s, n), 0.95 if s and s in n else 0.0)
+
+        mine = self._my_playlists()
         if mine:
-            best = max(mine, key=lambda p: score(name, p["name"]))
-            if score(name, best["name"]) >= 0.6:
+            best = max(mine, key=pl_score)
+            if pl_score(best) >= 0.55:
                 self.sp.start_playback(device_id=dev, context_uri=best["uri"])
                 return f"Playing playlist {best['name']}"
         return self._play_context(name, "playlist")

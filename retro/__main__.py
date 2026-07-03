@@ -16,9 +16,12 @@ MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/mode
     "medium": ("vosk-model-en-us-0.22-lgraph", "130 MB"),
 }
 # Vosk only spots the wake word (small is plenty); Whisper hears the command.
+# notify: "smart" = subtle sound for successful actions, toasts only for
+# errors and answers; "all" = toast everything.
 DEFAULTS = {"wake_phrase": "hey retro", "model": "small",
             "input_device": None, "sound": True,
-            "stt": "whisper", "whisper_model": "base.en"}
+            "stt": "whisper", "whisper_model": "base.en",
+            "notify": "smart"}
 ICON = Path(__file__).parent / "assets" / "icon.png"
 ICON_ICO = Path(__file__).parent / "assets" / "icon.ico"
 
@@ -77,14 +80,12 @@ def make_image():
     return img
 
 
-CHIME = Path(__file__).parent / "assets" / "wake.wav"
-
-
-def beep():
-    """Soft async chime - quiet enough that the mic barely picks it up."""
+def play_wav(name):
+    """Soft async cue - quiet enough that the mic barely picks it up."""
     if sys.platform == "win32":
         import winsound
-        winsound.PlaySound(str(CHIME), winsound.SND_FILENAME | winsound.SND_ASYNC
+        winsound.PlaySound(str(Path(__file__).parent / "assets" / name),
+                           winsound.SND_FILENAME | winsound.SND_ASYNC
                            | winsound.SND_NODEFAULT)
 
 
@@ -155,16 +156,37 @@ def main():
         except Exception:
             pass
 
+    # successes get a subtle sound + tooltip update; toasts only carry news
+    # you must read (errors, "what's playing")
+    QUIET_OK = ("Playing", "Queued", "Paused", "Resuming", "Skipped",
+                "Previous", "Volume", "Shuffle")
+
     def on_command(text):
         def work():  # off the mic thread: API round trips must not deafen the app
             intent = voice.parse(text)
-            notify(player.handle(*intent) if intent else f"Didn't catch that: '{text}'")
+            if not intent:
+                if cfg["sound"]:
+                    play_wav("err.wav")
+                notify(f"Didn't catch that: '{text}'")
+                return
+            msg = player.handle(*intent)
+            quiet = (cfg["notify"] == "smart" and intent[0] != "now_playing"
+                     and msg.startswith(QUIET_OK))
+            if quiet:
+                if cfg["sound"]:
+                    play_wav("ok.wav")
+                print(msg)
+                icon.title = f"Spotify Retro - {msg}"  # hover shows the last action
+            else:
+                if cfg["sound"] and not msg.startswith(QUIET_OK) and intent[0] != "now_playing":
+                    play_wav("err.wav")
+                notify(msg)
         threading.Thread(target=work, daemon=True).start()
 
     listener = voice.Listener(
         model, cfg["wake_phrase"], on_command,
         on_wake=lambda: notify("Listening..."),
-        on_wake_hint=beep if cfg["sound"] else lambda: None,
+        on_wake_hint=(lambda: play_wav("wake.wav")) if cfg["sound"] else lambda: None,
         device=cfg["input_device"], debug=args.debug)
     listener.restart = threading.Event()
 
@@ -219,14 +241,21 @@ def main():
             notify(f"Voice listener stopped: {e}")
 
     def load_whisper():
-        """Whisper loads in ~5s; commands fall back to Vosk text until then."""
+        """Whisper loads in ~5s; commands fall back to Vosk text until then.
+        The user's top artists become Whisper hotwords, so names like 'Yeat'
+        decode as themselves instead of a dictionary word."""
         if cfg["stt"] != "whisper":
             return
-        tr = stt.make_transcriber(cfg["whisper_model"])
+        try:
+            hotwords = ", ".join(sorted(player.user_artists()))[:300] or None
+        except Exception:
+            hotwords = None
+        tr = stt.make_transcriber(cfg["whisper_model"], hotwords=hotwords)
         if tr:
             tr(b"\x00" * 32000)  # warm up the compute graph
             listener.transcriber = tr
-            print(f"Whisper ({cfg['whisper_model']}) ready")
+            print(f"Whisper ({cfg['whisper_model']}) ready"
+                  + (f", biased to {hotwords.count(',') + 1} artists" if hotwords else ""))
 
     threading.Thread(target=run_listener, daemon=True).start()
     threading.Thread(target=load_whisper, daemon=True).start()

@@ -20,6 +20,10 @@ then re-transcribed by [Whisper](https://github.com/SYSTRAN/faster-whisper)
 (base.en, CPU int8, ~0.5s), which is far better at song titles and artist
 names. Whichever transcription parses as a valid command wins.
 
+It also learns you: your top Spotify artists become Whisper *hotwords* (so
+"Yeat" decodes as Yeat, not "beat") and get a ranking boost in search — an
+artist you actually listen to beats a sound-alike stranger.
+
 Song lookup doesn't trust Spotify's #1 hit: candidates from several search
 strategies are ranked by fuzzy similarity to what you actually said, so long
 titles and non-chart-toppers resolve correctly ("play cigarettes out the window
@@ -60,6 +64,7 @@ you), then:
 | Say | Does |
 |---|---|
 | `play <song>` / `play <song> by <artist>` | search and play a track |
+| `queue <song>` / `play <song> next` / `add <song> to the queue` | add to queue |
 | `play the artist <name>` / `play songs by <name>` | play an artist |
 | `play the album <name>` / `play my playlist <name>` | album / your playlists |
 | `play my liked songs` | shuffle your liked songs |
@@ -97,7 +102,10 @@ Debug what it hears: `spotify-retro --debug`
 - `stt`: `"whisper"` (default) or `"vosk"` to skip Whisper on very weak machines
 - `whisper_model`: `"base.en"` (default, fast) or `"small.en"` (more accurate, ~4x slower)
 - `input_device`: pick a microphone from the tray menu instead of editing this
-- `sound`: the wake-confirmation chime; `false` to disable
+- `sound`: wake chime + success/error cues; `false` to disable
+- `notify`: `"smart"` (default - subtle sound for successes, toasts only for
+  errors and answers; the tray tooltip always shows the last action) or
+  `"all"` to toast everything
 
 ## Tray menu
 

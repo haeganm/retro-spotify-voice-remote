@@ -62,7 +62,11 @@ INTENTS = [
     _i(r"play (?:some|songs by|music by) (.+)", "play_artist", lambda m: m.group(1)),
     _i(r"play (?:the )?album (.+)", "play_album", lambda m: m.group(1)),
     _i(r"play (?:the |my )?playlist (.+)", "play_playlist", lambda m: m.group(1)),
+    _i(r"play (?:the |my )?(.+) playlist", "play_playlist", lambda m: m.group(1)),
     _i(r"play (?:my )?(?:(?:liked?|favou?rite|saved) (?:songs?|tracks?|music)|favou?rites?|likes)", "play_liked"),
+    # "queue" decodes as its homophones constantly
+    _i(r"(?:(?:queue|que|cue|q)(?: up)?|add) (.+?)(?: to (?:the |my )?(?:queue|que|cue|q))?", "queue_track", lambda m: m.group(1)),
+    _i(r"play (.+) next", "queue_track", lambda m: m.group(1)),
     # "play X by Y" goes to Spotify search as-is: splitting on "by" would break
     # titles like "stand by me"; player retries without "by" if search misses.
     _i(r"play (.+)", "play_track", lambda m: m.group(1)),

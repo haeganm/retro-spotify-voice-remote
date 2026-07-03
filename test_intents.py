@@ -37,6 +37,11 @@ CASES = {
     "turn shuffle off": ("shuffle_off", None),
     "play my liked songs": ("play_liked", None),
     "play favorites": ("play_liked", None),
+    "queue mr brightside": ("queue_track", "mr brightside"),
+    "queue up bohemian rhapsody": ("queue_track", "bohemian rhapsody"),
+    "add stand by me to the queue": ("queue_track", "stand by me"),
+    "play thriller next": ("queue_track", "thriller"),
+    "play my gym playlist": ("play_playlist", "gym"),
     # noise decodes as filler words at the edges - stripped on second pass
     "the skip the": ("next_track", None),
     "uh play the less i know the better": ("play_track", "the less i know the better"),
@@ -113,12 +118,20 @@ assert list(query_variants("stand by me by ben e king")) == [
 
 
 class FakeSp:
-    def __init__(self, tracks=(), device=True, playlists=(), liked=()):
+    def __init__(self, tracks=(), device=True, playlists=(), liked=(), fav=()):
         self.tracks = dict(tracks)  # query -> [(name, artist, popularity)]
         self.device = device
         self.playlists = list(playlists)
         self.liked = list(liked)
+        self.fav = list(fav)        # user's top artists
         self.played = None
+        self.queued = None
+
+    def current_user_top_artists(self, limit, time_range):
+        return {"items": [{"name": n} for n in self.fav]}
+
+    def add_to_queue(self, uri, device_id=None):
+        self.queued = uri
 
     def current_playback(self):
         return {"device": {"id": "d1", "volume_percent": 50}} if self.device else None
@@ -168,10 +181,22 @@ p = fake_player(tracks={"artist:green day": [
     ("Brain Stew", "Green Day", 70), ("Basket Case", "Green Day", 80)]})
 assert p.handle("play_track", "brain stu by green day") == "Playing Brain Stew by Green Day"
 
-# own playlists beat public search; fuzzy match on name
+# familiar artist beats a sound-alike stranger with a more popular track
+p = fake_player(fav=["Yeat"], tracks={"rockstar by yeat": [
+    ("rockstar", "<3BEAT", 85), ("Rockstar", "Yeat", 55)]})
+assert p.handle("play_track", "rockstar by yeat") == "Playing Rockstar by Yeat"
+
+# queueing
+p = fake_player(tracks={"thriller": [("Thriller", "Michael Jackson", 90)]})
+assert p.handle("queue_track", "thriller") == "Queued Thriller by Michael Jackson"
+assert p.sp.queued == "uri:Thriller"
+
+# own playlists beat public search; decorated names match by containment
 p = fake_player(playlists=["Gym Pump", "chill vibes"])
 assert p.handle("play_playlist", "gym pump") == "Playing playlist Gym Pump"
 assert p.sp.played == "uri:pl:Gym Pump"
+p = fake_player(playlists=["\U0001F525 GYM PUMP mix 2024 \U0001F525", "chill vibes"])
+assert "GYM PUMP" in p.handle("play_playlist", "gym pump")
 
 p = fake_player(liked=["a", "b", "c"])
 assert p.handle("play_liked") == "Playing your liked songs"

@@ -33,6 +33,9 @@ PHRASES = {
     "mrbrightside": ("hey retro play mister brightside by the killers",
                      "play_track", None),
     "brainstew": ("hey retro play brain stew by green day", "play_track", None),
+    "queue": ("hey retro queue bohemian rhapsody", "queue_track", "bohemian rhapsody"),
+    # niche artist name: expected to need --hotwords "Yeat" to transcribe right
+    "yeat": ("hey retro play rockstar by yeat", "play_track", None),
 }
 
 
@@ -58,6 +61,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", choices=list(MODELS), default="small")
     ap.add_argument("--stt", choices=["vosk", "whisper"], default="whisper")
+    ap.add_argument("--hotwords", help="comma-separated artist names to bias whisper")
     args = ap.parse_args()
 
     from vosk import KaldiRecognizer, Model, SetLogLevel
@@ -67,7 +71,7 @@ def main():
     transcriber = None
     if args.stt == "whisper":
         from retro.stt import make_transcriber
-        transcriber = make_transcriber()
+        transcriber = make_transcriber(hotwords=args.hotwords)
         transcriber(b"\x00" * 32000)  # warm up
 
     tts = Path(tempfile.gettempdir()) / "spotify-retro-e2e"
