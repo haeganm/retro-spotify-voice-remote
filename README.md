@@ -133,6 +133,8 @@ engine; only title-carrying commands (play/queue/...) take the ~0.6s Whisper pas
 - `notify`: `"smart"` (default - subtle sound for control commands, voice/toast
   for results and errors; the tray tooltip always shows the last action) or
   `"all"` to toast everything
+- `log`: `true` (default) - keep the local speech transcript log for
+  debugging; `false` disables it
 
 ## Tray menu
 
@@ -147,14 +149,23 @@ python e2e_voice.py      # synthesized speech through the real model (Windows)
 
 ## Privacy & security
 
-- Speech never leaves your machine: wake-word and transcription are fully
-  offline. The only network traffic is api.spotify.com (and one-time model
-  downloads).
-- Auth is OAuth PKCE: no client secret exists; the token cache, your config,
-  and the transcript log (`retro.log`) live in your OS app-data dir - none of
-  it is in the repo.
-- A transcript of recognized speech is kept locally in `retro.log` (last ~500
-  lines) for debugging. Delete it anytime.
+- **Speech never leaves your machine** - wake-word and transcription are fully
+  offline. Outbound traffic is exactly: `api.spotify.com`/`accounts.spotify.com`
+  (HTTPS, playback + auth) and two one-time model downloads
+  (`alphacephei.com`, SHA-256-verified; `huggingface.co`, hash-verified). No
+  telemetry, no update checks.
+- **Auth is OAuth PKCE** - no client secret exists anywhere. Your Spotify
+  token is encrypted at rest with Windows DPAPI; your Client ID is not a
+  secret. Everything lives in `%APPDATA%\SpotifyRetro`, never in the repo.
+- **Transcript log**: recognized speech is kept locally in `retro.log` (last
+  ~500 lines) for debugging. Set `"log": false` in config to disable, or
+  delete the file anytime.
+- **System-touching behaviors** (both user-triggered, both reversible):
+  "Start with Windows" creates a Startup shortcut; selecting a Bluetooth
+  headset mic temporarily switches the Windows default audio output so your
+  music keeps playing, restored when you switch back - crash-safe.
+
+See [SECURITY.md](SECURITY.md) for the full threat model.
 
 ## Troubleshooting
 

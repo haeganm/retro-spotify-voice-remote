@@ -28,5 +28,12 @@ spotify-retro = "retro.__main__:main"
 [tool.setuptools]
 packages = ["retro"]
 
+[tool.bandit]
+# B110/B112 (try/except/pass|continue): deliberate resilience in the audio /
+# COM / mic-probing paths - a voice remote must degrade, never crash, when a
+# device or API misbehaves. B404/B603: one subprocess call, absolute path,
+# list args, inputs system-derived and quote-escaped (see set_startup).
+skips = ["B110", "B112", "B404", "B603"]
+
 [tool.setuptools.package-data]
 retro = ["assets/*"]

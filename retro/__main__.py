@@ -13,9 +13,11 @@ from pathlib import Path
 from . import osd, stt, voice, winaudio
 from .player import Player
 
-MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/models
-    "small": ("vosk-model-small-en-us-0.15", "40 MB"),
-    "medium": ("vosk-model-en-us-0.22-lgraph", "130 MB"),
+MODELS = {  # name -> (folder, approx size, zip sha256) at https://alphacephei.com/vosk/models
+    "small": ("vosk-model-small-en-us-0.15", "40 MB",
+              "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"),
+    "medium": ("vosk-model-en-us-0.22-lgraph", "130 MB",
+               "d9838b4aaa82a75c4a17f5aca300eaca129aaab2a7cbf951bafbb500eb9c4334"),
 }
 # Vosk only spots the wake word (small is plenty); Whisper hears the command.
 # notify: "smart" = subtle sound for successful actions, toasts only for
@@ -23,7 +25,8 @@ MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/mode
 DEFAULTS = {"wake_phrase": "hey retro", "model": "small",
             "input_device": None, "sound": True,
             "stt": "whisper", "whisper_model": "auto", "device": "auto",
-            "notify": "smart", "duck": True, "osd": True}
+            "notify": "smart", "duck": True, "osd": True,
+            "log": True}  # false: no speech transcripts written to retro.log
 ICON = Path(__file__).parent / "assets" / "icon.png"
 ICON_ICO = Path(__file__).parent / "assets" / "icon.ico"
 
@@ -77,13 +80,21 @@ def load_config(d):
 
 
 def ensure_model(d, size):
-    folder, mb = MODELS.get(size) or MODELS["medium"]
+    import hashlib
+    folder, mb, sha = MODELS.get(size) or MODELS["medium"]
     m = d / folder
     if m.exists():
         return m
     print(f"Downloading Vosk speech model ({mb}, one time)...")
+    url = f"https://alphacephei.com/vosk/models/{folder}.zip"
+    if not url.startswith("https://"):  # real check, not assert: survives -O
+        raise ValueError("model URL must be https")
     zpath = d / "model.zip"
-    urllib.request.urlretrieve(f"https://alphacephei.com/vosk/models/{folder}.zip", zpath)
+    urllib.request.urlretrieve(url, zpath)  # nosec B310 - https asserted above
+    digest = hashlib.sha256(zpath.read_bytes()).hexdigest()
+    if digest != sha:
+        zpath.unlink()
+        raise RuntimeError(f"model download failed integrity check ({digest[:12]}...)")
     with zipfile.ZipFile(zpath) as z:
         # belt-and-braces zip-slip guard (extract() also sanitizes paths)
         for n in z.namelist():
@@ -202,13 +213,18 @@ def set_startup(enable):
     ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(lnk)}');"
           f"$s.TargetPath='{q(pythonw)}';$s.Arguments='-m retro';"
           f"$s.IconLocation='{q(ICON_ICO)}';$s.Save()")
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+    powershell = (Path(os.environ.get("SystemRoot", r"C:\Windows"))
+                  / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
+    subprocess.run([str(powershell), "-NoProfile", "-Command", ps],
                    check=True, creationflags=0x08000000)  # CREATE_NO_WINDOW
 
 
-def make_logger(d):
+def make_logger(d, enabled=True):
     """Append-only transcript log (what each engine heard, what ran) so
-    recognition misses can be diagnosed from ground truth. Trimmed on start."""
+    recognition misses can be diagnosed from ground truth. Trimmed on start.
+    Privacy switch: config "log": false disables it entirely."""
+    if not enabled:
+        return lambda line: None
     logf = d / "retro.log"
     if logf.exists():
         lines = logf.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]
@@ -306,7 +322,7 @@ def main():
                 "Previous", "Volume", "Shuffle")
     VOLUME_ACTIONS = {"set_volume", "volume_up", "volume_down"}
 
-    log = make_logger(d)
+    log = make_logger(d, enabled=cfg["log"])
 
     def on_command(text):
         def work():  # off the mic thread: API round trips must not deafen the app

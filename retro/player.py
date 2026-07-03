@@ -8,8 +8,9 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
 import spotipy
-from spotipy.cache_handler import CacheFileHandler
 from spotipy.oauth2 import SpotifyPKCE
+
+from .tokencache import EncryptedCacheHandler
 
 SCOPES = ("user-modify-playback-state user-read-playback-state "
           "playlist-read-private user-library-read user-top-read")
@@ -178,7 +179,7 @@ class Player:
             client_id=client_id,
             redirect_uri=REDIRECT_URI,
             scope=SCOPES,
-            cache_handler=CacheFileHandler(cache_path=str(cache_path)),
+            cache_handler=EncryptedCacheHandler(cache_path),
         ))
 
     def handle(self, action, arg=None):

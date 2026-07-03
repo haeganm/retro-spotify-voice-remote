@@ -1,5 +1,8 @@
 """Smallest check that fails if the intent parser breaks: python test_intents.py"""
+import json as _json
+import tempfile as _tempfile
 import time
+from pathlib import Path as _Path
 
 import spotipy
 
@@ -7,6 +10,7 @@ import retro.voice as voice_mod
 from retro.__main__ import mic_family
 from retro.player import NO_DEVICE, Player, _digits, _norm, _pl_score, query_variants, score
 from retro.stt import normalize
+from retro.tokencache import EncryptedCacheHandler
 from retro.voice import Listener, parse, strip_wake, words_to_int
 
 CASES = {
@@ -73,6 +77,19 @@ CASES = {
 for text, want in CASES.items():
     got = parse(text)
     assert got == want, f"{text!r}: got {got}, want {want}"
+
+# token cache: encrypted at rest, legacy plaintext migrates, corrupt -> None
+_tf = _Path(_tempfile.mkdtemp()) / "tok.json"
+_h = EncryptedCacheHandler(_tf)
+assert _h.get_cached_token() is None                      # missing file
+_tf.write_text(_json.dumps({"refresh_token": "legacy"}))  # legacy plaintext
+assert _h.get_cached_token()["refresh_token"] == "legacy"
+_h.save_token_to_cache({"refresh_token": "s3cret"})
+raw = _tf.read_bytes()
+assert raw.startswith(b"SRDP1") and b"s3cret" not in raw  # encrypted at rest
+assert _h.get_cached_token()["refresh_token"] == "s3cret"
+_tf.write_bytes(b"SRDP1garbage")
+assert _h.get_cached_token() is None                      # corrupt -> re-auth
 
 # mic endpoint families: several Windows endpoints per physical device
 assert mic_family("Headset (AirPods #4)") == "AirPods #4"
