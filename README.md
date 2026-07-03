@@ -173,7 +173,12 @@ corner overlay and tray-icon tooltip show exactly what it did.
   "input_device": null,
   "sound": true,
   "stt": "whisper",
-  "whisper_model": "base.en"
+  "whisper_model": "auto",
+  "device": "auto",
+  "notify": "smart",
+  "duck": true,
+  "osd": true,
+  "log": true
 }
 ```
 
