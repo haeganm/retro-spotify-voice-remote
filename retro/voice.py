@@ -271,9 +271,18 @@ class Listener:
             hinted = False  # one wake hint per utterance
             utt = bytearray()  # raw audio of the current utterance, for Whisper
             fed = 0  # samples fed to this recognizer (maps word times to utt)
-            with sd.RawInputStream(samplerate=16000, blocksize=4000,
-                                   dtype="int16", channels=1, callback=cb,
-                                   device=self.device):
+            try:
+                stream = sd.RawInputStream(samplerate=16000, blocksize=4000,
+                                           dtype="int16", channels=1, callback=cb,
+                                           device=self.device)
+            except Exception as e:
+                if self.device is None:
+                    raise
+                # chosen mic vanished or changed identity: default mic > deaf app
+                self.log(f"mic '{self.device}' failed ({e}); using default mic")
+                self.device = None
+                continue
+            with stream:
                 while not (stop.is_set() or self.restart.is_set()):
                     try:
                         data = q.get(timeout=0.5)

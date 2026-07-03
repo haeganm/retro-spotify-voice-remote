@@ -102,6 +102,20 @@ def input_devices():
     return out
 
 
+def resolve_device(pref):
+    """Config stores the mic by NAME (indexes shift between sessions);
+    resolve to a current index, or None (default mic) if it's gone."""
+    if pref is None:
+        return None
+    for i, name in input_devices():
+        if isinstance(pref, int):  # legacy index configs
+            if i == pref:
+                return i
+        elif pref.lower() in name.lower():
+            return i
+    return None
+
+
 def startup_lnk():
     return (Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu"
             / "Programs" / "Startup" / "Spotify Retro.lnk")
@@ -233,28 +247,28 @@ def main():
         model, cfg["wake_phrase"], on_command,
         on_wake=lambda: notify("Listening..."),
         on_wake_hint=wake_hint,
-        device=cfg["input_device"], debug=args.debug)
+        device=resolve_device(cfg["input_device"]), debug=args.debug)
     listener.log = log
     listener.restart = threading.Event()
 
     def toggle(icon_, item):
         listening.clear() if listening.is_set() else listening.set()
 
-    def pick_mic(index):  # None = system default
+    def pick_mic(name, index):  # (None, None) = system default
         def do(icon_, item):
-            cfg["input_device"] = index
+            cfg["input_device"] = name  # stored by name: indexes shift between boots
             save_config(d, cfg)
             listener.device = index
             listener.restart.set()
         return do
 
     def mic_items():
-        yield pystray.MenuItem("System default", pick_mic(None),
+        yield pystray.MenuItem("System default", pick_mic(None, None),
                                checked=lambda item: cfg["input_device"] is None,
                                radio=True)
         for i, name in input_devices():
-            yield pystray.MenuItem(name, pick_mic(i),
-                                   checked=lambda item, i=i: cfg["input_device"] == i,
+            yield pystray.MenuItem(name, pick_mic(name, i),
+                                   checked=lambda item, name=name: cfg["input_device"] == name,
                                    radio=True)
 
     def toggle_startup(icon_, item):
