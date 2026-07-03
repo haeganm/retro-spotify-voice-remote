@@ -393,7 +393,8 @@ def main():
                 bt.add(fam)  # Bluetooth mic: using it silences A2DP music on Windows
             seen.add(fam)
         for fam in sorted(seen):
-            label = f"{fam}  (mutes music - Bluetooth)" if fam in bt else fam
+            label = (f"{fam}  (Windows limitation: headset audio degrades while its mic is on)"
+                     if fam in bt else fam)
             yield pystray.MenuItem(label, pick_mic(fam),
                                    checked=lambda item, fam=fam: cfg["input_device"] == fam,
                                    radio=True)
