@@ -75,6 +75,10 @@ def main():
         print(player.handle(*intent) if intent else f"Didn't understand: {args.say}")
         return
 
+    # First API call triggers the one-time browser OAuth; do it at startup,
+    # not mid-first-command.
+    print(f"Connected. Now playing: {player.now_playing()}")
+
     model = ensure_model(d)
     import pystray
 
