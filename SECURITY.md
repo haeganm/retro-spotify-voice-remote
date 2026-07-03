@@ -24,7 +24,7 @@ found something sensitive anyway, open an issue asking for a contact.
   rest with Windows DPAPI (user-scoped), so other Windows accounts and offline
   disk access can't read it. There is no client secret anywhere - the app uses
   OAuth PKCE by design. Your Client ID is not a secret.
-- **Local files:** everything lives in `%APPDATA%\SpotifyRetro` - config,
+- **Local files:** everything lives in `%APPDATA%\Retro` - config,
   encrypted token, speech models, and (unless disabled with `"log": false`)
   a transcript log of recognized speech for debugging.
 - **System-touching behaviors, by design and user-triggered:** creating a

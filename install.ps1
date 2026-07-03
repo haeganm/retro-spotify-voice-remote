@@ -1,4 +1,4 @@
-# Spotify Retro - one-command Windows installer.
+# Retro - one-command Windows installer.
 #   powershell -ExecutionPolicy Bypass -File install.ps1
 # Creates an isolated .venv, installs the tested dependency set, detects an
 # NVIDIA GPU for fast Whisper, and puts a launcher icon on your desktop.
@@ -50,12 +50,12 @@ try {
 
 if (-not $NoShortcut) {
     $desktop = [Environment]::GetFolderPath("Desktop")
-    $s = (New-Object -ComObject WScript.Shell).CreateShortcut("$desktop\Spotify Retro.lnk")
+    $s = (New-Object -ComObject WScript.Shell).CreateShortcut("$desktop\Retro.lnk")
     $s.TargetPath = "$venv\Scripts\pythonw.exe"
     $s.Arguments = "-m retro"
     $s.WorkingDirectory = $repo
     $s.IconLocation = Join-Path $repo "retro\assets\icon.ico"
-    $s.Description = "Spotify Retro - voice remote"
+    $s.Description = "Retro - voice remote for Spotify"
     $s.Save()
     Write-Host "Desktop shortcut created." -ForegroundColor Green
 }
@@ -65,6 +65,6 @@ Write-Host "Installed. Two steps left (5 minutes, one time):" -ForegroundColor G
 Write-Host "  1. Create a free app at https://developer.spotify.com/dashboard"
 Write-Host "     - Redirect URI (exactly): http://127.0.0.1:8888/callback"
 Write-Host "     - API: Web API"
-Write-Host "  2. Double-click 'Spotify Retro' on your desktop and paste the app's Client ID."
+Write-Host "  2. Double-click 'Retro' on your desktop and paste the app's Client ID."
 Write-Host ""
 Write-Host "Then say: hey retro, play bohemian rhapsody"

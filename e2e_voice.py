@@ -78,7 +78,7 @@ def main():
         print(f"whisper: {used}")
         transcriber(b"\x00" * 32000)  # warm up
 
-    tts = Path(tempfile.gettempdir()) / "spotify-retro-e2e"
+    tts = Path(tempfile.gettempdir()) / "retro-e2e"
     tts.mkdir(exist_ok=True)
     make_wavs(tts)
 

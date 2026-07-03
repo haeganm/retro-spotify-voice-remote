@@ -1,4 +1,4 @@
-"""Spotify Retro - tray app entry point. Run with: spotify-retro (or python -m retro)"""
+"""Retro - a voice remote for Spotify. Run with: retro (or python -m retro)"""
 import argparse
 import json
 import os
@@ -38,7 +38,13 @@ def app_dir():
         base = Path.home() / "Library" / "Application Support"
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    d = base / "SpotifyRetro"
+    d = base / "Retro"
+    legacy = base / "SpotifyRetro"  # pre-rename installs
+    if legacy.exists() and not d.exists():
+        try:
+            legacy.rename(d)
+        except OSError:
+            d = legacy  # locked (old instance still running): keep working
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -60,7 +66,7 @@ def ask_client_id():
     from tkinter import simpledialog
     root = tk.Tk()
     root.withdraw()
-    val = simpledialog.askstring("Spotify Retro - first run",
+    val = simpledialog.askstring("Retro - first run",
                                  instructions + "\n\nPaste your Client ID:")
     root.destroy()
     return (val or "").strip()
@@ -195,7 +201,18 @@ def pick_input(pref=None, exclude=()):
 
 def startup_lnk():
     return (Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu"
-            / "Programs" / "Startup" / "Spotify Retro.lnk")
+            / "Programs" / "Startup" / "Retro.lnk")
+
+
+def migrate_legacy_startup():
+    """Pre-rename Startup shortcut: replace with the new name."""
+    old = startup_lnk().with_name("Spotify Retro.lnk")
+    if old.exists():
+        old.unlink(missing_ok=True)
+        try:
+            set_startup(True)
+        except Exception:
+            pass
 
 
 def set_startup(enable):
@@ -242,9 +259,10 @@ def main():
         # own app identity: otherwise Windows matches ANY pythonw window to
         # our shortcuts and paints the Retro icon on unrelated Python apps
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SpotifyRetro.App")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Retro.App")
+        migrate_legacy_startup()
 
-    ap = argparse.ArgumentParser(prog="spotify-retro")
+    ap = argparse.ArgumentParser(prog="retro")
     ap.add_argument("--say", help="run one command as text (no mic) and exit, e.g. --say 'play daft punk'")
     ap.add_argument("--debug", action="store_true", help="print everything the recognizer hears")
     ap.add_argument("--misses", action="store_true", help="show recent unrecognized commands from the log")
@@ -284,7 +302,7 @@ def main():
         try:
             guard.bind(("127.0.0.1", 48765))  # ponytail: port-bind single-instance lock
         except OSError:
-            print("Spotify Retro is already running (check the tray).")
+            print("Retro is already running (check the tray).")
             return
 
     if args.say:
@@ -303,7 +321,7 @@ def main():
     listening.set()
     stop = threading.Event()
 
-    icon = pystray.Icon("SpotifyRetro", make_image(), "Spotify Retro")
+    icon = pystray.Icon("Retro", make_image(), "Retro")
     show_osd = osd.make_osd() if cfg["osd"] else None
 
     def notify(msg):
@@ -312,7 +330,7 @@ def main():
             show_osd(msg)
             return
         try:
-            icon.notify(msg, "Spotify Retro")
+            icon.notify(msg, "Retro")
         except Exception:
             pass
 
@@ -345,7 +363,7 @@ def main():
                 if cfg["sound"]:
                     play_wav("ok.wav")
                 print(msg)
-                icon.title = f"Spotify Retro - {msg}"[:120]  # hover shows last action
+                icon.title = f"Retro - {msg}"[:120]  # hover shows last action
             else:
                 if cfg["sound"] and not msg.startswith(QUIET_OK) and intent[0] != "now_playing":
                     play_wav("err.wav")
@@ -441,7 +459,7 @@ def main():
 
     def reauth(icon_, item):
         (d / "token.json").unlink(missing_ok=True)
-        notify("Token cleared - restart Spotify Retro to sign in again.")
+        notify("Token cleared - restart Retro to sign in again.")
 
     def quit_(icon_, item):
         winaudio.restore_output(out_marker)  # never leave the system on the phone-quality output

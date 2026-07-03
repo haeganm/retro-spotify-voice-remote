@@ -1,8 +1,8 @@
-<p align="center"><img src="retro/assets/icon.png" width="128" alt="Spotify Retro"></p>
+<p align="center"><img src="retro/assets/icon.png" width="128" alt="Retro"></p>
 
-# Spotify Retro
+# Retro
 
-A free, local voice remote for Spotify Premium. Runs in your system tray, listens
+A free, local voice remote **for Spotify Premium**. Runs in your system tray, listens
 offline (speech never leaves your machine), and controls whatever device Spotify
 is already playing on — desktop, phone, speaker.
 
@@ -43,14 +43,14 @@ by tv girl" finds TV Girl, not whatever is popular this week).
 ## Install (one command, $0)
 
 ```powershell
-git clone https://github.com/YOURNAME/spotify-retro
-cd spotify-retro
+git clone https://github.com/YOURNAME/retro
+cd retro
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 The installer creates an isolated environment, installs the tested dependency
 set (`requirements.lock`), enables GPU acceleration if you have an NVIDIA
-card, and puts a **Spotify Retro** icon on your desktop.
+card, and puts a **Retro** icon on your desktop.
 
 Then the one-time human part (5 minutes):
 
@@ -68,7 +68,7 @@ silently at login.
 
 ```sh
 pip install .        # or pip install -e . for hacking
-spotify-retro        # console entry point
+retro                # console entry point
 ```
 </details>
 
@@ -96,17 +96,17 @@ you), then:
 Say it in one breath ("hey retro play thriller") or wait for the beep /
 *Listening...* notification after the wake phrase.
 
-Test without a mic: `spotify-retro --say "play daft punk"` ·
-Debug what it hears: `spotify-retro --debug`, or check the transcript log at
-`%APPDATA%\SpotifyRetro\retro.log` (every recognition + command outcome) ·
-List everything it failed to understand: `spotify-retro --misses`.
+Test without a mic: `retro --say "play daft punk"` ·
+Debug what it hears: `retro --debug`, or check the transcript log at
+`%APPDATA%\Retro\retro.log` (every recognition + command outcome) ·
+List everything it failed to understand: `retro --misses`.
 
 Control commands (skip/pause/volume/...) dispatch instantly from the wake-word
 engine; only title-carrying commands (play/queue/...) take the ~0.6s Whisper pass.
 
 ## Config
 
-`%APPDATA%\SpotifyRetro\config.json`:
+`%APPDATA%\Retro\config.json`:
 
 ```json
 {
@@ -156,7 +156,7 @@ python e2e_voice.py      # synthesized speech through the real model (Windows)
   telemetry, no update checks.
 - **Auth is OAuth PKCE** - no client secret exists anywhere. Your Spotify
   token is encrypted at rest with Windows DPAPI; your Client ID is not a
-  secret. Everything lives in `%APPDATA%\SpotifyRetro`, never in the repo.
+  secret. Everything lives in `%APPDATA%\Retro`, never in the repo.
 - **Transcript log**: recognized speech is kept locally in `retro.log` (last
   ~500 lines) for debugging. Set `"log": false` in config to disable, or
   delete the file anytime.
@@ -171,16 +171,23 @@ See [SECURITY.md](SECURITY.md) for the full threat model.
 
 | Symptom | Do this |
 |---|---|
-| It never hears the wake word | `spotify-retro --mic-test` — speak while it runs; pick the mic with the biggest bar (tray → Microphone), or leave it on Automatic |
-| It mishears commands | `spotify-retro --misses` lists everything it failed to parse; `%APPDATA%\SpotifyRetro\retro.log` shows exactly what each engine heard |
+| It never hears the wake word | `retro --mic-test` — speak while it runs; pick the mic with the biggest bar (tray → Microphone), or leave it on Automatic |
+| It mishears commands | `retro --misses` lists everything it failed to parse; `%APPDATA%\Retro\retro.log` shows exactly what each engine heard |
 | "No Spotify device found" | Open Spotify on any device — this is a remote, not a player |
 | Music goes quiet/mono on a Bluetooth headset mic | Windows can't do hi-fi audio + headset mic at once; the app keeps sound flowing on the headset channel and restores hi-fi when you switch mics. Use Automatic (a wired/built-in mic) for full quality |
 | Commands need Premium | The Spotify playback API rejects free accounts |
 
-Uninstall: delete the repo folder, `%APPDATA%\SpotifyRetro`, and the desktop
+Uninstall: delete the repo folder, `%APPDATA%\Retro`, and the desktop
 shortcut (plus tray → "Start with Windows" off, or delete the Startup shortcut).
 
-## License
+## License & credits
 
-MIT — see [LICENSE](LICENSE). Speech models: Vosk (Apache-2.0),
-faster-whisper/Whisper (MIT).
+MIT — see [LICENSE](LICENSE). Built on [Vosk](https://alphacephei.com/vosk/)
+(Apache-2.0), [faster-whisper](https://github.com/SYSTRAN/faster-whisper) /
+OpenAI Whisper (MIT), and [spotipy](https://github.com/spotipy-dev/spotipy) (MIT).
+
+---
+
+*Retro is an independent project — not affiliated with, endorsed by, or
+sponsored by Spotify AB. Spotify is a trademark of Spotify AB. Requires a
+user-created Spotify developer application and a Spotify Premium account.*
