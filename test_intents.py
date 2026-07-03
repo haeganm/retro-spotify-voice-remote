@@ -37,6 +37,13 @@ CASES = {
     "turn shuffle off": ("shuffle_off", None),
     "play my liked songs": ("play_liked", None),
     "play favorites": ("play_liked", None),
+    # log-derived: real mishearings from retro.log
+    "resumed": ("resume", None),
+    "cause": ("pause", None),
+    "play my light songs": ("play_liked", None),
+    "playlist light songs": ("play_playlist", "light songs"),
+    "play the playlist called gym": ("play_playlist", "gym"),
+    "playlist seven point o": ("play_playlist", "seven point o"),
     "queue mr brightside": ("queue_track", "mr brightside"),
     "queue up bohemian rhapsody": ("queue_track", "bohemian rhapsody"),
     "add stand by me to the queue": ("queue_track", "stand by me"),
@@ -96,8 +103,13 @@ lis2.transcriber = lambda a: (_ for _ in ()).throw(RuntimeError)  # whisper cras
 lis2.feed_text("hey retro play thriller", now=6, audio=b"pcm")    # -> vosk fallback
 lis2.transcriber = lambda a: "unrelated mumble"  # whisper text has no wake, no parse
 lis2.feed_text("hey retro play daft punk", now=7, audio=b"pcm")   # -> vosk fallback
+# verb grafting (the money-twerk bug): whisper drops the verb but hears the
+# title; keep Vosk's intent, send BOTH hearings to search
+lis2.transcriber = lambda a: "money twerk by yeat"
+lis2.feed_text("hey retro play money toward my eat", now=8, audio=b"pcm")
 assert heard2 == ["play brain stew by green day", "pause", "the skip the",
-                  "skip", "play thriller", "play daft punk"], heard2
+                  "skip", "play thriller", "play daft punk",
+                  "play money twerk by yeat|money toward my eat"], heard2
 
 # Search scoring: exact-but-obscure must beat popular-but-partial.
 from retro.player import NO_DEVICE, Player, query_variants, score
@@ -182,6 +194,15 @@ p = fake_player(tracks={"the less i know the better by tame impala": [
     ("The Less", "Somebody Big", 99)]})
 assert "Tame Impala" in p.handle("play_track", "the less i know the better by tame impala")
 
+# multi-hearing search: candidates from both texts compete, best match wins
+p = fake_player(tracks={"bohemian rhapsody": [("Bohemian Rhapsody", "Queen", 90)]})
+assert p.handle("queue_track", "cubo hemian rhapsody|bohemian rhapsody") \
+    == "Queued Bohemian Rhapsody by Queen"
+p = fake_player(tracks={"money twerk by yeat": [("Money Twërk", "Yeat", 60)],
+                        "money toward my eat": [("Money - Mazza Remix", "Klaas", 80)]})
+assert p.handle("play_track", "money twerk by yeat|money toward my eat") \
+    == "Playing Money Twërk by Yeat"
+
 # garbled title + clear artist: rescued from artist-filtered search
 p = fake_player(tracks={"artist:green day": [
     ("Brain Stew", "Green Day", 70), ("Basket Case", "Green Day", 80)]})
@@ -203,6 +224,22 @@ assert p.handle("play_playlist", "gym pump") == "Playing playlist Gym Pump"
 assert p.sp.played == "uri:pl:Gym Pump"
 p = fake_player(playlists=["\U0001F525 GYM PUMP mix 2024 \U0001F525", "chill vibes"])
 assert "GYM PUMP" in p.handle("play_playlist", "gym pump")
+
+# spoken numbers match versioned names ("seven point o" -> "7.0")
+from retro.player import _pl_score
+assert _pl_score("seven point o", "7.0 \U0001F3AF") >= 0.9
+assert _pl_score("seven point zero", "7.0 \U0001F3AF") >= 0.9
+p = fake_player(playlists=["7.0 \U0001F3AF", "boiii"])
+assert p.handle("play_playlist", "seven point o") == "Playing playlist 7.0 \U0001F3AF"
+
+# 'liked songs' asked as a playlist routes to liked songs
+p = fake_player(liked=["a"])
+assert p.handle("play_playlist", "light songs") == "Playing your liked songs"
+
+# no match: error names the closest candidates
+p = fake_player(playlists=["7.0 \U0001F3AF", "boiii", "haeglin"])
+msg = p.handle("play_playlist", "quantum flimflam")
+assert msg.startswith("No playlist like") and "Closest:" in msg, msg
 
 p = fake_player(liked=["a", "b", "c"])
 assert p.handle("play_liked") == "Playing your liked songs"

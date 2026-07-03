@@ -46,7 +46,7 @@ def _i(pattern, action, arg=lambda m: None):
 # Order matters: exact phrases before greedy "play (.+)".
 INTENTS = [
     _i(r"(?:pause|stop)(?: (?:the )?(?:music|song|playback|playing))?", "pause"),
-    _i(r"(?:resume|continue|keep playing|play)(?: (?:the )?(?:music|song))?", "resume"),
+    _i(r"(?:resumed?|continue|keep playing|play)(?: (?:the )?(?:music|song))?", "resume"),
     _i(r"(?:next|skip)(?: (?:this |the )?(?:song|track))?|skip it", "next_track"),
     _i(r"(?:previous|go back|back|last)(?: (?:song|track))?", "previous_track"),
     _i(r"(?:turn (?:the )?)?volume up|turn it up|louder", "volume_up"),
@@ -61,9 +61,10 @@ INTENTS = [
     _i(r"play (?:the )?artist (.+)", "play_artist", lambda m: m.group(1)),
     _i(r"play (?:some|songs by|music by) (.+)", "play_artist", lambda m: m.group(1)),
     _i(r"play (?:the )?album (.+)", "play_album", lambda m: m.group(1)),
-    _i(r"play (?:the |my )?playlist (.+)", "play_playlist", lambda m: m.group(1)),
+    _i(r"(?:play )?(?:the |my )?playlist (?:called |named )?(.+)", "play_playlist", lambda m: m.group(1)),
     _i(r"play (?:the |my )?(.+) playlist", "play_playlist", lambda m: m.group(1)),
-    _i(r"play (?:my )?(?:(?:liked?|favou?rite|saved) (?:songs?|tracks?|music)|favou?rites?|likes)", "play_liked"),
+    # "liked" is heard as "like"/"light" constantly
+    _i(r"play (?:my )?(?:(?:liked?|light|favou?rite|saved) (?:songs?|tracks?|music)|favou?rites?|likes)", "play_liked"),
     # "queue" decodes as its homophones constantly
     _i(r"(?:(?:queue|que|cue|q)(?: up)?|add) (.+?)(?: to (?:the |my )?(?:queue|que|cue|q))?", "queue_track", lambda m: m.group(1)),
     _i(r"play (.+) next", "queue_track", lambda m: m.group(1)),
@@ -98,6 +99,14 @@ def _match(text):
     return None
 
 
+# Last-resort net for near-homophones of control words ("cause" -> pause).
+# Only consulted for short unparsed text so titles are never hijacked.
+_CONTROLS = {"pause": ("pause", None), "stop": ("pause", None),
+             "skip": ("next_track", None), "next": ("next_track", None),
+             "resume": ("resume", None), "previous": ("previous_track", None),
+             "go back": ("previous_track", None), "shuffle": ("shuffle_on", None)}
+
+
 def parse(text):
     """Return (action, arg) or None if the utterance isn't a known command."""
     text = text.lower().strip()
@@ -105,13 +114,24 @@ def parse(text):
     intent = _match(text)
     if intent is None and defill(text) != text:
         intent = _match(defill(text))  # second chance without edge noise
+    if intent is None:
+        short = defill(text)
+        if short and len(short.split()) <= 2:
+            best_r = 0.749
+            for phrase, it in _CONTROLS.items():
+                r = difflib.SequenceMatcher(None, short, phrase).ratio()
+                if r > best_r:
+                    best_r, intent = r, it
     return intent
 
 
 # Only these intents carry free text (titles/names) that Whisper hears better;
 # everything else is a fixed control phrase Vosk handles faster and safer.
-NEEDS_WHISPER = {"play_track", "queue_track", "play_playlist",
-                 "play_album", "play_artist"}
+# The value is a canonical verb prefix used to graft Whisper's text (which
+# often drops the verb) onto the intent Vosk identified.
+NEEDS_WHISPER = {"play_track": "play", "queue_track": "queue",
+                 "play_playlist": "play playlist", "play_album": "play the album",
+                 "play_artist": "play the artist"}
 
 
 def strip_wake(text, wake):
@@ -184,6 +204,15 @@ class Listener:
         cand = rest if rest else w
         if cand and parse(cand):
             return cand
+        if cand and fb_intent:
+            # Whisper often hears the title but drops the verb ("money twerk by
+            # yeat"): keep Vosk's intent and send BOTH engines' words to the
+            # search ('a|b'), letting candidate ranking pick the real track.
+            # Gated on similarity so a Whisper hallucination can't join in.
+            similar = difflib.SequenceMatcher(None, cand, fb_intent[1] or "").ratio() >= 0.35
+            combo = f"{NEEDS_WHISPER[fb_intent[0]]} {cand}|{fb_intent[1] or ''}".rstrip("|")
+            if similar and parse(combo):
+                return combo
         if fb_intent:
             return fallback
         return cand or fallback

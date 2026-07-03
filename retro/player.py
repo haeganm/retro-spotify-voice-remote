@@ -42,6 +42,31 @@ def score(query, name, artists=(), popularity=0):
     return max(cands) + popularity / 1000.0
 
 
+_NUM_WORDS = {"zero": "0", "oh": "0", "o": "0", "one": "1", "two": "2",
+              "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7",
+              "eight": "8", "nine": "9", "ten": "10", "point": "."}
+
+
+def _pl_score(said, name):
+    """Playlist-name match. Real names carry emojis/decorations (containment
+    counts) and version numbers ('7.0' is spoken 'seven point o' - digitize
+    the speech and compare stripped)."""
+    s, n = _norm(said), _norm(name)
+    cands = [_sim(s, n), 0.95 if s and s in n else 0.0]
+    ds = re.sub(r"[^a-z0-9]", "", "".join(_NUM_WORDS.get(w, w) for w in said.lower().split()))
+    dn = re.sub(r"[^a-z0-9]", "", name.lower())
+    if ds and dn:
+        cands.append(_sim(ds, dn))
+        if ds in dn:
+            cands.append(0.9)
+    return max(cands)
+
+
+def _queries(query):
+    """A command arg may carry both engines' hearings joined by '|'."""
+    return [q.strip() for q in query.split("|") if q.strip()]
+
+
 def query_variants(query):
     """The raw query, plus a field-filtered variant for every possible
     ' by ' split — so 'stand by me by ben e king' tries both splits and
@@ -128,24 +153,30 @@ class Player:
     def _best_track(self, query):
         """Rank up to 10 hits per query variant by fuzzy similarity instead of
         trusting Spotify's #1 (which favors chart-toppers over exact matches).
+        The query may be several '|'-joined hearings; candidates from all of
+        them compete and each is scored against its best-matching hearing.
         All lookups run concurrently."""
-        variants = list(query_variants(query))
+        queries = _queries(query)
+        variants = list(dict.fromkeys(
+            v for q in queries for v in query_variants(q)))
         futures = [_POOL.submit(self.sp.search, q=q, type="track", limit=10)
                    for q in variants]
-        top_f = _POOL.submit(self._artist_tracks, query) if " by " in query else None
+        top_fs = [_POOL.submit(self._artist_tracks, q)
+                  for q in queries if " by " in q]
         cands = {}
         for f in futures:
             for t in f.result()["tracks"]["items"]:
                 cands[t["uri"]] = t
-        for t in (top_f.result() if top_f else []):
-            cands.setdefault(t["uri"], t)
+        for f in top_fs:
+            for t in f.result():
+                cands.setdefault(t["uri"], t)
         if not cands:
             return None
         fav = {_norm(n) for n in self.user_artists()}
 
         def key(t):
-            s = score(query, t["name"], [a["name"] for a in t["artists"]],
-                      t.get("popularity", 0))
+            s = max(score(q, t["name"], [a["name"] for a in t["artists"]],
+                          t.get("popularity", 0)) for q in queries)
             if any(_norm(a["name"]) in fav for a in t["artists"]):
                 s += 0.12  # artists you listen to beat sound-alike strangers
             return s
@@ -153,11 +184,14 @@ class Player:
         return max(cands.values(), key=key)
 
     def _search(self, query, kind):
-        items = self.sp.search(q=query, type=kind, limit=5)[kind + "s"]["items"]
-        items = [i for i in items if i]  # public playlist search can return nulls
+        items = []
+        for q in _queries(query):
+            items += [i for i in self.sp.search(q=q, type=kind, limit=5)[kind + "s"]["items"]
+                      if i]  # public playlist search can return nulls
         if not items:
             return None
-        return max(items, key=lambda i: score(query, i["name"], (), i.get("popularity", 0)))
+        return max(items, key=lambda i: max(
+            score(q, i["name"], (), i.get("popularity", 0)) for q in _queries(query)))
 
     def _play_context(self, name, kind):
         dev = self._device()
@@ -182,7 +216,7 @@ class Player:
             return NO_DEVICE
         t = self._best_track(query)
         if not t:
-            return f"No results for '{query}'"
+            return f"No results for '{query.replace('|', ' / ')}'"
         self.sp.start_playback(device_id=dev, uris=[t["uri"]])
         return f"Playing {t['name']} by {t['artists'][0]['name']}"
 
@@ -216,23 +250,30 @@ class Player:
 
     def play_playlist(self, name):
         """Your own playlists first (public search can't see private ones),
-        then public search. Playlist names carry emojis and decorations, so
-        containment ('gym' in 'GYM PUMP mix') counts as a strong match."""
+        then public search. 'Liked songs' feels like a playlist to users but
+        isn't one to Spotify - route it."""
+        names = _queries(name)
+        if any(_sim(_norm(n), "liked songs") >= 0.7 for n in names):
+            return self.play_liked()
         dev = self._device()
         if not dev:
             return NO_DEVICE
 
-        def pl_score(p):
-            s, n = _norm(name), _norm(p["name"])
-            return max(_sim(s, n), 0.95 if s and s in n else 0.0)
+        def best_score(p):
+            return max(_pl_score(n, p["name"]) for n in names)
 
         mine = self._my_playlists()
         if mine:
-            best = max(mine, key=pl_score)
-            if pl_score(best) >= 0.55:
+            best = max(mine, key=best_score)
+            if best_score(best) >= 0.55:
                 self.sp.start_playback(device_id=dev, context_uri=best["uri"])
                 return f"Playing playlist {best['name']}"
-        return self._play_context(name, "playlist")
+        res = self._play_context(name, "playlist")
+        if res.startswith("No playlist") and mine:
+            ranked = sorted(mine, key=best_score, reverse=True)
+            closest = ", ".join(p["name"] for p in ranked[:3])
+            return f"No playlist like '{names[0]}'. Closest: {closest}"
+        return res
 
     def play_liked(self):
         dev = self._device()

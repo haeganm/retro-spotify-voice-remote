@@ -33,7 +33,7 @@ PHRASES = {
     "mrbrightside": ("hey retro play mister brightside by the killers",
                      "play_track", None),
     "brainstew": ("hey retro play brain stew by green day", "play_track", None),
-    "queue": ("hey retro queue bohemian rhapsody", "queue_track", "bohemian rhapsody"),
+    "queue": ("hey retro queue bohemian rhapsody", "queue_track", None),
     # niche artist name: expected to need --hotwords "Yeat" to transcribe right
     "yeat": ("hey retro play rockstar by yeat", "play_track", None),
     # short control commands: must take the Vosk fast path (0ms whisper)

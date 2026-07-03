@@ -268,7 +268,9 @@ def main():
         if cfg["stt"] != "whisper":
             return
         try:  # capped: a long bias string swamps short clips
-            hotwords = ", ".join(player.user_artists()[:25])[:300] or None
+            words = player.user_artists()[:25]
+            words += [p["name"] for p in player._my_playlists()]
+            hotwords = ", ".join(dict.fromkeys(words))[:400] or None
         except Exception:
             hotwords = None
         tr = stt.make_transcriber(cfg["whisper_model"], hotwords=hotwords)
