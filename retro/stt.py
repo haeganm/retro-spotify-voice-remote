@@ -6,12 +6,17 @@ artist names than Kaldi-era models."""
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 
 def normalize(text):
-    """Whisper emits punctuation and case; commands want neither."""
+    """Whisper emits punctuation, case, stylized spellings ('Wôa...!') and
+    occasionally glues words to digits ('play9210'); commands want none of
+    that - fold accents to ASCII, split letter-digit seams, then strip."""
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
     text = re.sub(r"[^a-z0-9' ]", " ", text.lower())
+    text = re.sub(r"(?<=[a-z])(?=[0-9])|(?<=[0-9])(?=[a-z])", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 

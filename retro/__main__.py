@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -125,18 +126,44 @@ def input_devices():
     return out
 
 
-def resolve_device(pref):
-    """Config stores the mic by NAME (indexes shift between sessions);
-    resolve to a current index, or None (default mic) if it's gone."""
-    if pref is None:
-        return None
-    for i, name in input_devices():
-        if isinstance(pref, int):  # legacy index configs
-            if i == pref:
-                return i
-        elif pref.lower() in name.lower():
-            return i
-    return None
+def mic_family(name):
+    """The user-meaningful device name: Windows exposes several endpoints per
+    physical mic ('Headset (AirPods #4)', 'Input (...;(AirPods #4))') and some
+    are silent traps - we store the family and probe all its endpoints."""
+    groups = re.findall(r"\(([^()]*)\)", name)
+    for g in reversed(groups):
+        if g.strip():
+            return g.strip()
+    return re.sub(r"\s*\(\s*\)\s*$", "", name).strip() or name.strip()
+
+
+def _probe_mic(index, seconds=0.5):
+    """RMS of a short capture; -1 if the endpoint won't open."""
+    import numpy as np
+    import sounddevice as sd
+    try:
+        rec = sd.rec(int(seconds * 16000), samplerate=16000, channels=1,
+                     dtype="int16", device=index)
+        sd.wait()
+    except Exception:
+        return -1.0
+    return float(np.sqrt(np.mean(rec.astype(np.float64) ** 2)))
+
+
+def pick_input(pref=None, exclude=()):
+    """Choose the input endpoint that actually delivers audio. Preferred
+    family first (all its endpoints), then everything. Names lie; RMS doesn't."""
+    devs = [(i, n) for i, n in input_devices() if i not in exclude]
+    if isinstance(pref, int):  # legacy index configs
+        match = [n for i, n in devs if i == pref]
+        pref = mic_family(match[0]) if match else None
+    fam = [(i, n) for i, n in devs if pref and pref.lower() in n.lower()]
+    for pool in (fam, devs):
+        scored = [(rms, i, n) for i, n in pool if (rms := _probe_mic(i)) >= 25]
+        if scored:
+            _, i, n = max(scored)
+            return i, n
+    return None, "system default"
 
 
 def startup_lnk():
@@ -299,32 +326,61 @@ def main():
         if cfg["duck"]:
             threading.Thread(target=player.duck, daemon=True).start()
 
+    mic_index, mic_name = pick_input(cfg["input_device"])
+    print(f"Microphone: {mic_name}")
+    log(f"mic: {mic_name!r} (index {mic_index})")
+
     listener = voice.Listener(
         model, cfg["wake_phrase"], on_command,
         on_wake=lambda: notify("Listening..."),
         on_wake_hint=wake_hint,
-        device=resolve_device(cfg["input_device"]), debug=args.debug)
+        device=mic_index, debug=args.debug)
     listener.log = log
     listener.restart = threading.Event()
+
+    switches = [0]
+
+    def on_dead_mic():
+        """20s of dead air on the chosen endpoint: find one that's alive."""
+        if switches[0] >= 3:
+            return  # don't flap forever in a genuinely silent room
+        switches[0] += 1
+        exclude = (listener.device,) if isinstance(listener.device, int) else ()
+        idx, name = pick_input(cfg["input_device"], exclude=exclude)
+        if idx is not None and idx != listener.device:
+            log(f"mic: dead air, switching to {name!r} (index {idx})")
+            notify(f"Mic was silent - switched to {name}")
+            listener.device = idx
+            listener.restart.set()
+
+    listener.on_dead_mic = on_dead_mic
 
     def toggle(icon_, item):
         listening.clear() if listening.is_set() else listening.set()
 
-    def pick_mic(name, index):  # (None, None) = system default
+    def pick_mic(family):  # None = auto (probe everything)
         def do(icon_, item):
-            cfg["input_device"] = name  # stored by name: indexes shift between boots
+            cfg["input_device"] = family  # family name: we probe its endpoints
             save_config(d, cfg)
-            listener.device = index
+            switches[0] = 0
+            idx, name = pick_input(family)
+            log(f"mic: user picked {family!r} -> {name!r} (index {idx})")
+            listener.device = idx
             listener.restart.set()
         return do
 
     def mic_items():
-        yield pystray.MenuItem("System default", pick_mic(None, None),
+        yield pystray.MenuItem("Automatic (recommended)", pick_mic(None),
                                checked=lambda item: cfg["input_device"] is None,
                                radio=True)
-        for i, name in input_devices():
-            yield pystray.MenuItem(name, pick_mic(name, i),
-                                   checked=lambda item, name=name: cfg["input_device"] == name,
+        seen = set()
+        for _, name in input_devices():
+            fam = mic_family(name)
+            if fam in seen:
+                continue
+            seen.add(fam)
+            yield pystray.MenuItem(fam, pick_mic(fam),
+                                   checked=lambda item, fam=fam: cfg["input_device"] == fam,
                                    radio=True)
 
     def toggle_startup(icon_, item):

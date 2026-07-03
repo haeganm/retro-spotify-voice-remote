@@ -182,6 +182,7 @@ class Listener:
         self.transcriber = transcriber  # optional fn(pcm16) -> text (see stt.py)
         self.log = lambda line: None  # set by the app to append to retro.log
         self.restart = None  # threading.Event set by the tray to reopen the mic
+        self.on_dead_mic = lambda: None  # fired after ~20s of dead air
         self._awaiting_until = 0.0
         self._decode_busy = False
 
@@ -283,6 +284,7 @@ class Listener:
     def run(self, listening, stop):
         import threading
 
+        import numpy as np
         import sounddevice as sd
         from vosk import Model, KaldiRecognizer, SetLogLevel
 
@@ -310,6 +312,8 @@ class Listener:
             utt = bytearray()  # raw audio of the current utterance, for Whisper
             fed = 0  # samples fed to this recognizer (maps word times to utt)
             warm = time.time()  # last Whisper use, for the keep-warm pulse
+            last_loud = time.time()  # dead-air detector (silent-trap endpoints)
+            dead_fired = False
             try:
                 stream = sd.RawInputStream(samplerate=16000, blocksize=4000,
                                            dtype="int16", channels=1, callback=cb,
@@ -338,6 +342,14 @@ class Listener:
                     if not listening.is_set():
                         utt.clear()
                         continue  # drop audio while muted
+                    # dead-air watchdog: real rooms always have a noise floor;
+                    # a flat-silent stream means this endpoint is a trap
+                    if np.abs(np.frombuffer(data, np.int16)).mean() > 25:
+                        last_loud = time.time()
+                    elif not dead_fired and time.time() - last_loud > 20:
+                        dead_fired = True
+                        self.log("mic: 20s of dead air on this endpoint")
+                        self.on_dead_mic()
                     utt.extend(data)
                     del utt[:-16000 * 2 * 20]  # cap at 20s
                     fed += len(data) // 2

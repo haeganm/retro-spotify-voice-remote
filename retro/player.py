@@ -4,6 +4,7 @@ import random
 import re
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
 import spotipy
@@ -17,35 +18,123 @@ NO_DEVICE = "No Spotify device found - open Spotify on any device first."
 _POOL = ThreadPoolExecutor(max_workers=8)  # searches + device prep in parallel
 
 
+def _fold(s):
+    """Stylized titles ('Wôa', 'Monëy Twërk') fold to ASCII instead of losing
+    the accented letters when non-alphanumerics are stripped."""
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+
+
 def _norm(s):
-    return re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
+    return re.sub(r"[^a-z0-9 ]", "", _fold(s).lower()).strip()
 
 
 def _sim(a, b):
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
+def _squash(s):
+    """Collapse letter runs so onomatopoeia matches at any length STT picked:
+    'sh'/'shh'/'shhh' all become 'sh'."""
+    return re.sub(r"(.)\1+", r"\1", s)
+
+
+# Titles carrying one of these that the user didn't ask for are nudged down -
+# 'california love' should get the original, not 'California Love (Remix)'.
+_VERSION_WORDS = frozenset(("remix live cover karaoke instrumental acoustic sped "
+                            "slowed acapella nightcore mashup medley remake reverb "
+                            "8d tribute parody").split())
+
+
+def _base_title(name):
+    """Search titles carry decorations nobody speaks: '90210 (feat. Kacy
+    Hill)', 'California Love - Original Version'. Strip bracketed chunks and
+    ' - ...' suffixes for an undecorated comparison candidate."""
+    return _norm(re.sub(r"[(\[].*?[)\]]", " ", name).split(" - ")[0]) or _norm(name)
+
+
 def score(query, name, artists=(), popularity=0):
     """Similarity of a heard query to a candidate (0..~1.1). Compares against
-    'title artists', title alone (the query may omit the artist), and every
-    'title by artist' reading of the query - so 'brain stew by green day'
-    scores the artist explicitly instead of hoping the concatenation matches.
-    Popularity is only a small tiebreak."""
+    decorated AND undecorated titles ('90210 (feat. Kacy Hill)' is spoken
+    '90210'), all-artists and primary-artist forms (feat credits dilute
+    otherwise), every ' by ' split, and every word split (people drop the
+    'by': '90210 travis scott'). Letter-run-collapsed and spoken-digit
+    readings join the same max() - rescues that never demote a match.
+    Unasked-for version markers (remix/live/...) are nudged down. Popularity
+    is only a small tiebreak (and absent from search results these days -
+    _best_track's rank bonus covers that job)."""
     q = _norm(query)
     title = _norm(name)
+    base = _base_title(name)
     art = _norm(" ".join(artists))
-    cands = [_sim(q, f"{title} {art}".strip()), _sim(q, title)]
+    prim = _norm(artists[0]) if artists else art
+    dq = _digits(query)
+    spoken_nums = dq != re.sub(r"[^a-z0-9]", "", q)  # query had number words
+
+    def t_sim(t):  # best reading of a title guess, squashed too
+        return max(_sim(t, title), _sim(t, base),
+                   _sim(_squash(t), _squash(title)), _sim(_squash(t), _squash(base)))
+
+    def a_sim(a):
+        return max(_sim(a, art), _sim(a, prim))
+
+    cands = [t_sim(q)]
+    for a in {art, prim}:
+        full = f"{title} {a}".strip()
+        cands += [_sim(q, full), _sim(q, f"{base} {a}".strip()),
+                  _sim(_squash(q), _squash(full))]
+    if spoken_nums:
+        cands += [_sim(dq, _digits(name)),
+                  _sim(dq, _digits(f"{name} {' '.join(artists)}"))]
     parts = query.split(" by ")
-    for i in range(1, len(parts)):
-        t = _norm(" by ".join(parts[:i]))
-        a = _norm(" by ".join(parts[i:]))
-        cands.append(0.6 * _sim(t, title) + 0.4 * _sim(a, art))
-    return max(cands) + popularity / 1000.0
+    splits = [(" by ".join(parts[:i]), " by ".join(parts[i:]))
+              for i in range(1, len(parts))]
+    words = q.split()
+    splits += [(" ".join(words[:i]), " ".join(words[i:]))
+               for i in range(1, len(words))]
+    for t, a in splits:
+        t, a = _norm(t), _norm(a)
+        s = 0.6 * t_sim(t) + 0.4 * a_sim(a)
+        if spoken_nums:
+            s = max(s, 0.6 * _sim(_digits(t), _digits(name)) + 0.4 * a_sim(a))
+        cands.append(s)
+    best = max(cands)
+    if (_VERSION_WORDS & set(title.split())) - set(q.split()):
+        best -= 0.08  # a remix/live/... the user didn't ask for
+    return best + popularity / 1000.0
 
 
 _NUM_WORDS = {"zero": "0", "oh": "0", "o": "0", "one": "1", "two": "2",
               "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7",
-              "eight": "8", "nine": "9", "ten": "10", "point": "."}
+              "eight": "8", "nine": "9", "ten": "10", "eleven": "11",
+              "twelve": "12", "thirteen": "13", "fourteen": "14",
+              "fifteen": "15", "sixteen": "16", "seventeen": "17",
+              "eighteen": "18", "nineteen": "19", "twenty": "20",
+              "thirty": "30", "forty": "40", "fifty": "50", "sixty": "60",
+              "seventy": "70", "eighty": "80", "ninety": "90", "point": "."}
+
+
+def _spoken_digits(text):
+    """Rewrite spoken number words as digits, gluing adjacent ones together:
+    'nine oh two one oh by travis scott' -> '90210 by travis scott'."""
+    toks, run = [], []
+    for w in text.split():
+        d = _NUM_WORDS.get(w)
+        if d is None:
+            if run:
+                toks.append("".join(run))
+                run = []
+            toks.append(w)
+        else:
+            run.append(d)
+    if run:
+        toks.append("".join(run))
+    return " ".join(toks)
+
+
+def _digits(text):
+    """Digitized squash for matching numeric titles: 'nine oh two one oh'
+    and '90210' both become '90210'."""
+    return re.sub(r"[^a-z0-9]", "", _spoken_digits(_fold(text).lower()))
 
 
 def _pl_score(said, name):
@@ -54,8 +143,7 @@ def _pl_score(said, name):
     the speech and compare stripped)."""
     s, n = _norm(said), _norm(name)
     cands = [_sim(s, n), 0.95 if s and s in n else 0.0]
-    ds = re.sub(r"[^a-z0-9]", "", "".join(_NUM_WORDS.get(w, w) for w in said.lower().split()))
-    dn = re.sub(r"[^a-z0-9]", "", name.lower())
+    ds, dn = _digits(said), _digits(name)
     if ds and dn:
         cands.append(_sim(ds, dn))
         if ds in dn:
@@ -71,12 +159,17 @@ def _queries(query):
 def query_variants(query):
     """The raw query, plus a field-filtered variant for every possible
     ' by ' split — so 'stand by me by ben e king' tries both splits and
-    'stand by me' alone still matches the title."""
+    'stand by me' alone still matches the title. Spoken numbers also get a
+    digit-collapsed reading ('nine oh two one oh ...' -> '90210 ...') so
+    Spotify's own search sees the real title."""
     yield query
     parts = query.split(" by ")
     for i in range(1, len(parts)):
         title, artist = " by ".join(parts[:i]), " by ".join(parts[i:])
         yield f"track:{title} artist:{artist}"
+    dq = _spoken_digits(query)
+    if dq != query:
+        yield from query_variants(dq)
 
 
 class Player:
@@ -140,17 +233,25 @@ class Player:
         return self._arts_cache
 
     def user_titles(self):
-        """Titles of the user's 50 most recent liked tracks (hotword fodder)."""
+        """Titles the user actually plays (top tracks first - the ones voice
+        commands ask for most) plus the 50 most recent likes. Hotword fodder,
+        so Whisper can spell titles like 'Shhh!' and 'Woa' at all."""
         titles = getattr(self, "_titles_cache", None)
         if titles is not None:
             return titles
+        names = {}  # insertion-ordered set
         try:
-            titles = [it["track"]["name"]
-                      for it in self.sp.current_user_saved_tracks(limit=50)["items"]]
+            for t in self.sp.current_user_top_tracks(limit=50, time_range="medium_term")["items"]:
+                names[t["name"]] = None
         except Exception:
-            titles = []
-        self._titles_cache = titles
-        return titles
+            pass
+        try:
+            for it in self.sp.current_user_saved_tracks(limit=50)["items"]:
+                names[it["track"]["name"]] = None
+        except Exception:
+            pass
+        self._titles_cache = list(names)
+        return self._titles_cache
 
     def _prep(self):
         """ONE round trip that both snapshots what's playing (for put_back)
@@ -266,25 +367,31 @@ class Player:
                    for q in variants]
         top_fs = [_POOL.submit(self._artist_tracks, q)
                   for q in queries if " by " in q]
-        cands = {}
+        cands = {}  # uri -> (track, best rank across variants' result lists)
         for f in futures:
-            for t in f.result()["tracks"]["items"]:
-                cands[t["uri"]] = t
+            for i, t in enumerate(f.result()["tracks"]["items"]):
+                old = cands.get(t["uri"])
+                if old is None or i < old[1]:
+                    cands[t["uri"]] = (t, i)
         for f in top_fs:
             for t in f.result():
-                cands.setdefault(t["uri"], t)
+                cands.setdefault(t["uri"], (t, 10))  # rescue pool: no rank bonus
         if not cands:
             return None
         fav = {_norm(n) for n in self.user_artists()}
 
-        def key(t):
+        def key(cand):
+            t, rank = cand
             s = max(score(q, t["name"], [a["name"] for a in t["artists"]],
                           t.get("popularity", 0)) for q in queries)
             if any(_norm(a["name"]) in fav for a in t["artists"]):
                 s += 0.12  # artists you listen to beat sound-alike strangers
-            return s
+            # search results no longer carry popularity; Spotify's own result
+            # order is the popularity signal - a small nudge that breaks
+            # near-ties toward the version everyone means
+            return s + max(0, 5 - rank) * 0.01
 
-        return max(cands.values(), key=key)
+        return max(cands.values(), key=key)[0]
 
     def _search(self, query, kind):
         items = []
@@ -399,7 +506,12 @@ class Player:
         dev = self._device()
         if not dev:
             return NO_DEVICE
-        self.sp.start_playback(device_id=dev)
+        try:
+            self.sp.start_playback(device_id=dev)
+        except spotipy.SpotifyException as e:
+            if "Restriction violated" in (getattr(e, "msg", None) or str(e)):
+                return "Already playing"  # 'play' while playing is not an error
+            raise
         return "Resuming"
 
     def pause(self):

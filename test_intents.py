@@ -4,7 +4,9 @@ import time
 import spotipy
 
 import retro.voice as voice_mod
-from retro.player import NO_DEVICE, Player, _pl_score, query_variants, score
+from retro.__main__ import mic_family
+from retro.player import NO_DEVICE, Player, _digits, _norm, _pl_score, query_variants, score
+from retro.stt import normalize
 from retro.voice import Listener, parse, strip_wake, words_to_int
 
 CASES = {
@@ -71,6 +73,12 @@ CASES = {
 for text, want in CASES.items():
     got = parse(text)
     assert got == want, f"{text!r}: got {got}, want {want}"
+
+# mic endpoint families: several Windows endpoints per physical device
+assert mic_family("Headset (AirPods #4)") == "AirPods #4"
+assert mic_family("Input (@System32\\drivers\\bthhfenum.sys,#2;%1 Hands-Free%0\n;(AirPods #4))") == "AirPods #4"
+assert mic_family("Microphone Array 3 ()") == "Microphone Array 3"
+assert mic_family("Microphone (Realtek HD Audio Mic input)") == "Realtek HD Audio Mic input"
 
 assert parse("banana hammock") is None
 assert words_to_int("seventeen") == 17
@@ -156,6 +164,34 @@ assert list(query_variants("stand by me by ben e king")) == [
     "track:stand by me artist:ben e king",
 ]
 
+# stylized/diacritic titles fold to ASCII instead of losing letters
+assert _norm("Wôa...! Beyoncé") == "woa beyonce"
+assert normalize("Wôa...!") == "woa"
+# spoken numbers digitize for matching numeric titles
+assert _digits("nine oh two one oh") == "90210"
+assert _digits("ninety two ten") == "90210"
+assert "90210 by travis scott" in list(query_variants("nine oh two one oh by travis scott"))
+# ranking: run-collapse rescues onomatopoeia, digits rescue numeric titles,
+# fold rescues stylized spellings - each beating a more popular wrong hit
+assert score("shh by yeat", "Shhh!", ["Yeat"], 55) > score("shh by yeat", "Sh Boom", ["Stranger"], 95)
+assert score("woa by yeat", "Wôa", ["Yeat"], 50) > score("woa by yeat", "Woah Woah Woah", ["Stranger"], 90)
+assert score("nine oh two one oh by travis scott", "90210", ["Travis Scott"], 70) \
+    > score("nine oh two one oh by travis scott", "Nine", ["Stranger"], 95)
+
+# log-derived (07-03): the real candidate sets that picked the wrong track.
+# decorated title + feat-diluted artists must not lose to a clean wrong title
+assert score("90210 travis scott", "90210 (feat. Kacy Hill)", ["Travis Scott", "Kacy Hill"]) \
+    > score("90210 travis scott", "SICKO MODE", ["Travis Scott"])
+assert score("90210 by travis scott", "90210 (feat. Kacy Hill)", ["Travis Scott", "Kacy Hill"]) \
+    > score("90210 by travis scott", "90210", ["sativa"])
+# unrequested remix loses to the original; an ASKED-for remix still wins
+assert score("california love tupac", "California Love - Original Version", ["2Pac", "Roger", "Dr. Dre"]) \
+    > score("california love tupac", "California Love (Remix)", ["2Pac", "Roger Troutman", "Dr. Dre"])
+assert score("california love remix tupac", "California Love (Remix)", ["2Pac", "Roger Troutman", "Dr. Dre"]) \
+    > score("california love remix tupac", "California Love - Original Version", ["2Pac", "Roger", "Dr. Dre"])
+# whisper glue: 'play9210' splits at the letter-digit seam
+assert normalize("play9210 travis scott") == "play 9210 travis scott"
+
 # Watchdog: a stuck decode must not block commands (falls back to Vosk text),
 # and a busy decoder means the next command skips Whisper entirely.
 voice_mod.WHISPER_TIMEOUT = 0.2
@@ -189,6 +225,9 @@ class FakeSp:
 
     def current_user_top_artists(self, limit, time_range):
         return {"items": [{"name": n} for n in self.fav]}
+
+    def current_user_top_tracks(self, limit, time_range):
+        return {"items": [{"name": n} for n in getattr(self, "top", [])]}
 
     def add_to_queue(self, uri, device_id=None):
         self.queued = uri
@@ -264,6 +303,21 @@ p = fake_player(tracks={"artist:green day": [
     ("Brain Stew", "Green Day", 70), ("Basket Case", "Green Day", 80)]})
 assert p.handle("play_track", "brain stu by green day") == "Playing Brain Stew by Green Day"
 
+# spoken numbers reach Spotify search as digits ("90210 by travis scott" variant)
+p = fake_player(tracks={"90210 by travis scott": [("90210", "Travis Scott", 80)]})
+assert p.handle("play_track", "nine oh two one oh by travis scott") \
+    == "Playing 90210 by Travis Scott"
+
+# onomatopoeic title: right artist + run-collapse beats a popular exact-ish stranger
+p = fake_player(fav=["Yeat"], tracks={"shh by yeat": [
+    ("Shhh!", "Yeat", 40), ("Shh", "Imposter", 90)]})
+assert p.handle("play_track", "shh by yeat") == "Playing Shhh! by Yeat"
+
+# hotword vocabulary: top tracks come first, deduped against likes
+p = fake_player()
+p.sp.top = ["Shhh!", "Wôa"]
+assert p.user_titles()[:2] == ["Shhh!", "Wôa"]
+
 # familiar artist beats a sound-alike stranger with a more popular track
 p = fake_player(fav=["Yeat"], tracks={"rockstar by yeat": [
     ("rockstar", "<3BEAT", 85), ("Rockstar", "Yeat", 55)]})
@@ -328,6 +382,17 @@ assert p.sp.vol == 15  # nothing restored: user's volume choice stands
 p = fake_player()
 assert p.handle("previous_track") == "Restarted track"
 assert p.sp.seeked == 0
+
+# "play" while already playing: Restriction violated is not an error
+p = fake_player()
+
+
+def _restricted(**kw):
+    raise spotipy.SpotifyException(403, -1, "Player command failed: Restriction violated")
+
+
+p.sp.start_playback = _restricted
+assert p.handle("resume") == "Already playing"
 
 assert fake_player().handle("play_track", "anything") == "No results for 'anything'"
 assert fake_player(device=False).handle("play_track", "x") == NO_DEVICE
