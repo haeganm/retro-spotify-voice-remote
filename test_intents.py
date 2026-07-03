@@ -34,6 +34,8 @@ CASES = {
     "shuffle on": ("shuffle_on", None),
     "shuffle": ("shuffle_on", None),
     "turn shuffle off": ("shuffle_off", None),
+    "play my liked songs": ("play_liked", None),
+    "play favorites": ("play_liked", None),
 }
 
 for text, want in CASES.items():
@@ -47,6 +49,10 @@ assert strip_wake("hey retro play thriller", "hey retro") == "play thriller"
 assert strip_wake("retro pause", "hey retro") == "pause"
 assert strip_wake("hey retro", "hey retro") == ""
 assert strip_wake("play thriller", "hey retro") is None
+assert strip_wake("a retro pause", "hey retro") == "pause"       # STT mangles "hey"
+assert strip_wake("hey metro next song", "hey retro") == "next song"  # fuzzy wake word
+assert strip_wake("random chatter here", "hey retro") is None
+assert parse("place stand by me") == ("play_track", "stand by me")  # "play s..." -> "place s..."
 
 # Listener routing: same-breath, two-step within 6s, expired window, no wake.
 heard = []
@@ -59,14 +65,32 @@ lis.feed_text("next song", now=210)          # window expired -> ignored
 lis.feed_text("random chatter", now=300)     # no wake -> ignored
 assert heard == ["play thriller", "<wake>", "pause", "<wake>"], heard
 
+# Search scoring: exact-but-obscure must beat popular-but-partial.
+from retro.player import NO_DEVICE, Player, query_variants, score
+
+tv_girl = score("cigarettes out the window", "Cigarettes out the Window", ["TV Girl"], 65)
+juice = score("cigarettes out the window", "Cigarettes", ["Juice WRLD"], 95)
+assert tv_girl > juice, (tv_girl, juice)
+# artist in query disambiguates covers
+orig = score("hurt by johnny cash", "Hurt", ["Johnny Cash"], 70)
+cover = score("hurt by johnny cash", "Hurt", ["Nine Inch Nails"], 80)
+assert orig > cover, (orig, cover)
+
+assert list(query_variants("stand by me by ben e king")) == [
+    "stand by me by ben e king",
+    "track:stand artist:me by ben e king",
+    "track:stand by me artist:ben e king",
+]
+
 # Player logic with a stubbed Spotify client (no network).
-from retro.player import NO_DEVICE, Player
 
 
 class FakeSp:
-    def __init__(self, tracks=(), device=True):
-        self.tracks = dict(tracks)  # query -> track name
+    def __init__(self, tracks=(), device=True, playlists=(), liked=()):
+        self.tracks = dict(tracks)  # query -> [(name, artist, popularity)]
         self.device = device
+        self.playlists = list(playlists)
+        self.liked = list(liked)
         self.played = None
 
     def current_playback(self):
@@ -76,12 +100,18 @@ class FakeSp:
         return {"devices": []}
 
     def search(self, q, type, limit):
-        hit = self.tracks.get(q)
-        items = [{"uri": "uri:" + hit, "name": hit, "artists": [{"name": "x"}]}] if hit else []
+        items = [{"uri": "uri:" + n, "name": n, "popularity": pop,
+                  "artists": [{"name": a}]} for n, a, pop in self.tracks.get(q, [])]
         return {type + "s": {"items": items}}
 
+    def current_user_playlists(self, limit):
+        return {"items": [{"uri": "uri:pl:" + n, "name": n} for n in self.playlists]}
+
+    def current_user_saved_tracks(self, limit):
+        return {"items": [{"track": {"uri": "uri:" + n}} for n in self.liked]}
+
     def start_playback(self, device_id=None, uris=None, context_uri=None):
-        self.played = uris[0] if uris else context_uri
+        self.played = uris if uris else context_uri
 
     def volume(self, n, device_id=None):
         self.vol = n
@@ -93,13 +123,27 @@ def fake_player(**kw):
     return p
 
 
-p = fake_player(tracks={"stand by me": "Stand by Me"})
-assert p.handle("play_track", "stand by me") == "Playing Stand by Me by x"
+p = fake_player(tracks={"stand by me": [("Stand by Me", "Ben E. King", 80)]})
+assert p.handle("play_track", "stand by me") == "Playing Stand by Me by Ben E. King"
 
-# raw query misses, fallback without "by" hits
-p = fake_player(tracks={"thriller michael jackson": "Thriller"})
-assert p.handle("play_track", "thriller by michael jackson") == "Playing Thriller by x"
-assert p.sp.played == "uri:Thriller"
+# raw query misses; the field-filtered "by" variant hits
+p = fake_player(tracks={"track:thriller artist:michael jackson": [("Thriller", "Michael Jackson", 90)]})
+assert p.handle("play_track", "thriller by michael jackson") == "Playing Thriller by Michael Jackson"
+
+# candidates from all variants ranked together: exact title wins over popular partial
+p = fake_player(tracks={"the less i know the better by tame impala": [
+    ("The Less I Know The Better", "Tame Impala", 80),
+    ("The Less", "Somebody Big", 99)]})
+assert "Tame Impala" in p.handle("play_track", "the less i know the better by tame impala")
+
+# own playlists beat public search; fuzzy match on name
+p = fake_player(playlists=["Gym Pump", "chill vibes"])
+assert p.handle("play_playlist", "gym pump") == "Playing playlist Gym Pump"
+assert p.sp.played == "uri:pl:Gym Pump"
+
+p = fake_player(liked=["a", "b", "c"])
+assert p.handle("play_liked") == "Playing your liked songs"
+assert sorted(p.sp.played) == ["uri:a", "uri:b", "uri:c"]
 
 assert fake_player().handle("play_track", "anything") == "No results for 'anything'"
 assert fake_player(device=False).handle("play_track", "x") == NO_DEVICE

@@ -1,4 +1,5 @@
 """Offline speech: mic -> Vosk -> intents. Nothing here touches the network."""
+import difflib
 import json
 import queue
 import re
@@ -54,6 +55,7 @@ INTENTS = [
     _i(r"play (?:some|songs by|music by) (.+)", "play_artist", lambda m: m.group(1)),
     _i(r"play (?:the )?album (.+)", "play_album", lambda m: m.group(1)),
     _i(r"play (?:the |my )?playlist (.+)", "play_playlist", lambda m: m.group(1)),
+    _i(r"play (?:my )?(?:(?:liked?|favou?rite|saved) (?:songs?|tracks?|music)|favou?rites?|likes)", "play_liked"),
     # "play X by Y" goes to Spotify search as-is: splitting on "by" would break
     # titles like "stand by me"; player retries without "by" if search misses.
     _i(r"play (.+)", "play_track", lambda m: m.group(1)),
@@ -63,6 +65,7 @@ INTENTS = [
 def parse(text):
     """Return (action, arg) or None if the utterance isn't a known command."""
     text = text.lower().strip()
+    text = re.sub(r"^place\b", "play", text)  # "play s..." often decodes as "place s..."
     for pat, action, argf in INTENTS:
         m = pat.fullmatch(text)
         if m:
@@ -74,14 +77,18 @@ def parse(text):
 
 
 def strip_wake(text, wake):
-    """If the utterance contains the wake phrase, return what follows it ('' if
-    nothing). Return None when the wake phrase isn't present. Also accepts the
-    last wake word alone ('retro play x') since Vosk often drops the 'hey'."""
+    """If the utterance starts with the wake phrase, return what follows it
+    ('' if nothing); None when it doesn't. Tolerant of how STT actually mangles
+    wake words: 'hey retro' decodes as 'a retro', 'the retro', or drops the
+    'hey' entirely, so the key wake word may sit at token 0 or 1 and only
+    needs to be a close fuzzy match ('metro' counts, 'random' doesn't)."""
     if wake in text:
         return text.split(wake, 1)[1].strip()
     word = wake.split()[-1]
-    if text == word or text.startswith(word + " "):
-        return text[len(word):].strip()
+    tokens = text.split()
+    for i in (0, 1):
+        if len(tokens) > i and difflib.SequenceMatcher(None, tokens[i], word).ratio() >= 0.75:
+            return " ".join(tokens[i + 1:])
     return None
 
 
@@ -89,11 +96,16 @@ class Listener:
     """Streams the mic into Vosk; calls on_command(text) with the utterance
     following the wake phrase (same breath or within the next 6 seconds)."""
 
-    def __init__(self, model_path, wake_phrase, on_command, on_wake=lambda: None):
+    def __init__(self, model_path, wake_phrase, on_command, on_wake=lambda: None,
+                 on_wake_hint=lambda: None, device=None, debug=False):
         self.model_path = str(model_path)
         self.wake = wake_phrase.lower()
         self.on_command = on_command
         self.on_wake = on_wake
+        self.on_wake_hint = on_wake_hint  # fires the instant the wake phrase shows in a partial
+        self.device = device  # sounddevice index/name substring, None = default
+        self.debug = debug
+        self.restart = None  # threading.Event set by the tray to reopen the mic
         self._awaiting_until = 0.0
 
     def feed_text(self, text, now=None):
@@ -112,27 +124,49 @@ class Listener:
             self.on_wake()
 
     def run(self, listening, stop):
+        import threading
+
         import sounddevice as sd
         from vosk import Model, KaldiRecognizer, SetLogLevel
 
         SetLogLevel(-1)
-        rec = KaldiRecognizer(Model(self.model_path), 16000)
-        q = queue.Queue()
+        model = Model(self.model_path)
+        self.restart = self.restart or threading.Event()
 
-        def cb(indata, frames, t, status):
-            q.put(bytes(indata))
+        while not stop.is_set():  # outer loop: one pass per mic device
+            self.restart.clear()
+            rec = KaldiRecognizer(model, 16000)
+            try:
+                # trailing-silence window before an utterance finalizes:
+                # (max unfinished, silence after speech, max utterance length)
+                rec.SetEndpointerDelays(1.6, 0.35, 12.0)
+            except AttributeError:
+                pass  # older vosk: default endpointing
+            q = queue.Queue()
 
-        with sd.RawInputStream(samplerate=16000, blocksize=8000,
-                               dtype="int16", channels=1, callback=cb):
-            while not stop.is_set():
-                try:
-                    data = q.get(timeout=0.5)
-                except queue.Empty:
-                    continue
-                if not listening.is_set():
-                    continue  # drop audio while muted
-                if not rec.AcceptWaveform(data):
-                    continue
-                text = json.loads(rec.Result()).get("text", "").strip()
-                if text:
-                    self.feed_text(text)
+            def cb(indata, frames, t, status):
+                q.put(bytes(indata))
+
+            hinted = False  # one wake hint per utterance
+            with sd.RawInputStream(samplerate=16000, blocksize=4000,
+                                   dtype="int16", channels=1, callback=cb,
+                                   device=self.device):
+                while not (stop.is_set() or self.restart.is_set()):
+                    try:
+                        data = q.get(timeout=0.5)
+                    except queue.Empty:
+                        continue
+                    if not listening.is_set():
+                        continue  # drop audio while muted
+                    if rec.AcceptWaveform(data):
+                        hinted = False
+                        text = json.loads(rec.Result()).get("text", "").strip()
+                        if self.debug and text:
+                            print(f"[heard] {text}")
+                        if text:
+                            self.feed_text(text)
+                    elif not hinted:
+                        partial = json.loads(rec.PartialResult()).get("partial", "")
+                        if strip_wake(partial, self.wake) is not None:
+                            hinted = True
+                            self.on_wake_hint()

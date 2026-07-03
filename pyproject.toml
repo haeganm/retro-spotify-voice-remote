@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spotify-retro"
+version = "2.0.0"
+description = "Free local voice remote for Spotify Premium - offline speech, tray app"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "vosk",
+    "sounddevice",
+    "spotipy",
+    "pystray",
+    "Pillow",
+]
+
+[project.scripts]
+spotify-retro = "retro.__main__:main"
+
+[tool.setuptools]
+packages = ["retro"]
+
+[tool.setuptools.package-data]
+retro = ["assets/*"]

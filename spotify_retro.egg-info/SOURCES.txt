@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+retro/__init__.py
+retro/__main__.py
+retro/player.py
+retro/voice.py
+retro/assets/icon.ico
+retro/assets/icon.png
+spotify_retro.egg-info/PKG-INFO
+spotify_retro.egg-info/SOURCES.txt
+spotify_retro.egg-info/dependency_links.txt
+spotify_retro.egg-info/entry_points.txt
+spotify_retro.egg-info/requires.txt
+spotify_retro.egg-info/top_level.txt

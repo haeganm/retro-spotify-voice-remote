@@ -1,3 +1,5 @@
+<p align="center"><img src="retro/assets/icon.png" width="128" alt="Spotify Retro"></p>
+
 # Spotify Retro
 
 A free, local voice remote for Spotify Premium. Runs in your system tray, listens
@@ -12,6 +14,11 @@ There's no music player in here. Spotify Connect's Web API *is* the remote:
 **mic → offline speech recognition ([Vosk](https://alphacephei.com/vosk/)) →
 intent → one HTTPS call to api.spotify.com**. The only network traffic is the
 Spotify API itself.
+
+Song lookup doesn't trust Spotify's #1 hit: candidates from several search
+strategies are ranked by fuzzy similarity to what you actually said, so long
+titles and non-chart-toppers resolve correctly ("play cigarettes out the window
+by tv girl" finds TV Girl, not whatever is popular this week).
 
 ## Requirements
 
@@ -30,50 +37,75 @@ Spotify API itself.
    ```sh
    git clone https://github.com/YOURNAME/spotify-retro
    cd spotify-retro
-   pip install -r requirements.txt
-   python -m retro
+   pip install .
+   spotify-retro
    ```
 
 3. First run: paste your app's **Client ID**, approve the browser sign-in once
-   (PKCE — no client secret involved), and let it download the ~40 MB speech
+   (PKCE — no client secret involved), and let it download the ~130 MB speech
    model. After that it just runs.
+
+Tray menu → **Start with Windows** makes it launch silently at login.
 
 ## Commands
 
-Say the wake phrase (**"hey retro"** by default, or just **"retro"**), then:
+Say the wake phrase (**"hey retro"** by default — a short beep confirms it heard
+you), then:
 
 | Say | Does |
 |---|---|
 | `play <song>` / `play <song> by <artist>` | search and play a track |
 | `play the artist <name>` / `play songs by <name>` | play an artist |
-| `play the album <name>` / `play my playlist <name>` | play an album / playlist |
+| `play the album <name>` / `play my playlist <name>` | album / your playlists |
+| `play my liked songs` | shuffle your liked songs |
 | `pause` / `stop` | pause |
 | `play` / `resume` | resume |
 | `next` / `skip` | next track |
 | `previous` / `go back` | previous track |
-| `volume up` / `volume down` / `set volume to fifty` | volume |
+| `volume up` / `turn it up` / `set volume to fifty` | Spotify volume (never system volume) |
 | `what's playing` | show current track |
 | `shuffle on` / `shuffle off` | shuffle |
 
-You can say it in one breath ("hey retro play thriller") or wait for the
-"Listening..." notification after the wake phrase.
+Say it in one breath ("hey retro play thriller") or wait for the beep /
+*Listening...* notification after the wake phrase.
 
-Test without a mic: `python -m retro --say "play daft punk"`
+Test without a mic: `spotify-retro --say "play daft punk"` ·
+Debug what it hears: `spotify-retro --debug`
 
 ## Config
 
 `%APPDATA%\SpotifyRetro\config.json` (Windows) or `~/.config/SpotifyRetro/config.json`:
 
 ```json
-{ "client_id": "...", "wake_phrase": "hey retro" }
+{
+  "client_id": "...",
+  "wake_phrase": "hey retro",
+  "model": "medium",
+  "input_device": null,
+  "sound": true
+}
 ```
 
-Tray menu: toggle listening, re-authenticate, quit.
+- `model`: `"medium"` (~130 MB, default, best accuracy) or `"small"` (~40 MB, low-spec machines)
+- `input_device`: pick a microphone from the tray menu instead of editing this
+- `sound`: the wake-confirmation beep; `false` to disable
+
+## Tray menu
+
+Listening on/off · Microphone picker · Start with Windows · Re-authenticate · Quit
+
+## Tests
+
+```sh
+python test_intents.py   # parser + player logic (offline, instant)
+python e2e_voice.py      # synthesized speech through the real model (Windows)
+```
 
 ## Cross-platform
 
-Everything used (Vosk, sounddevice, spotipy, pystray) works on Windows, macOS,
-and Linux. Built and tested on Windows 11.
+Vosk, sounddevice, spotipy, and pystray all support Windows/macOS/Linux.
+The Startup shortcut and TTS-based e2e test are Windows-only. Built and
+tested on Windows 11.
 
 ## License
 

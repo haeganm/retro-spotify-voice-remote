@@ -1,0 +1,2 @@
+[console_scripts]
+spotify-retro = retro.__main__:main
