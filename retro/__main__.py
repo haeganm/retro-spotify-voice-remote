@@ -169,6 +169,15 @@ def main():
     cfg = load_config(d)
     player = Player(cfg["client_id"], d / "token.json")
 
+    if not args.say:
+        import socket
+        guard = socket.socket()  # held for process lifetime
+        try:
+            guard.bind(("127.0.0.1", 48765))  # ponytail: port-bind single-instance lock
+        except OSError:
+            print("Spotify Retro is already running (check the tray).")
+            return
+
     if args.say:
         intent = voice.parse(args.say)
         print(player.handle(*intent) if intent else f"Didn't understand: {args.say}")
