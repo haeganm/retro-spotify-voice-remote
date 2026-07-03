@@ -1,5 +1,0 @@
-vosk
-sounddevice
-spotipy
-pystray
-Pillow
