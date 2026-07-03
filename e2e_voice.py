@@ -36,6 +36,9 @@ PHRASES = {
     "queue": ("hey retro queue bohemian rhapsody", "queue_track", "bohemian rhapsody"),
     # niche artist name: expected to need --hotwords "Yeat" to transcribe right
     "yeat": ("hey retro play rockstar by yeat", "play_track", None),
+    # short control commands: must take the Vosk fast path (0ms whisper)
+    "skip": ("hey retro skip", "next_track", None),
+    "shuffle": ("hey retro shuffle on", "shuffle_on", None),
 }
 
 

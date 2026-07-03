@@ -24,8 +24,11 @@ def make_transcriber(model_name="base.en", hotwords=None):
         return None
     model = WhisperModel(model_name, device="cpu", compute_type="int8")
 
+    pad = np.zeros(int(0.4 * 16000), dtype=np.float32)  # short clips hallucinate less with lead-in/out silence
+
     def transcribe(pcm16):
         audio = np.frombuffer(pcm16, np.int16).astype(np.float32) / 32768.0
+        audio = np.concatenate([pad, audio, pad])
         segments, _ = model.transcribe(audio, language="en", beam_size=5,
                                        hotwords=hotwords)
         return normalize(" ".join(s.text for s in segments))

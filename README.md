@@ -80,7 +80,11 @@ Say it in one breath ("hey retro play thriller") or wait for the beep /
 *Listening...* notification after the wake phrase.
 
 Test without a mic: `spotify-retro --say "play daft punk"` ·
-Debug what it hears: `spotify-retro --debug`
+Debug what it hears: `spotify-retro --debug`, or check the transcript log at
+`%APPDATA%\SpotifyRetro\retro.log` (every recognition + command outcome).
+
+Control commands (skip/pause/volume/...) dispatch instantly from the wake-word
+engine; only title-carrying commands (play/queue/...) take the ~0.6s Whisper pass.
 
 ## Config
 

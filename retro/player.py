@@ -92,26 +92,26 @@ class Player:
         return dev
 
     def user_artists(self):
-        """Names of artists this user actually listens to (top + liked),
-        cached for the process lifetime. Used to bias search ranking and
-        Whisper's vocabulary."""
+        """Artists this user actually listens to, most-relevant first (top
+        artists ranked, then liked-track artists), cached for the process
+        lifetime. Used to bias search ranking and Whisper's vocabulary."""
         arts = getattr(self, "_arts_cache", None)
         if arts is not None:
             return arts
-        names = set()
+        names = {}  # insertion-ordered set
         try:
             for a in self.sp.current_user_top_artists(limit=50, time_range="medium_term")["items"]:
-                names.add(a["name"])
+                names[a["name"]] = None
         except Exception:
             pass
         try:
             for it in self.sp.current_user_saved_tracks(limit=50)["items"]:
                 for a in it["track"].get("artists", []):
-                    names.add(a["name"])
+                    names[a["name"]] = None
         except Exception:
             pass
-        self._arts_cache = names
-        return names
+        self._arts_cache = list(names)
+        return self._arts_cache
 
     def _artist_tracks(self, query):
         """When the query names an artist ('x by green day'), that artist's

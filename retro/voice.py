@@ -108,6 +108,12 @@ def parse(text):
     return intent
 
 
+# Only these intents carry free text (titles/names) that Whisper hears better;
+# everything else is a fixed control phrase Vosk handles faster and safer.
+NEEDS_WHISPER = {"play_track", "queue_track", "play_playlist",
+                 "play_album", "play_artist"}
+
+
 def strip_wake(text, wake):
     """If the utterance starts with the wake phrase, return what follows it
     ('' if nothing); None when it doesn't. Tolerant of how STT actually mangles
@@ -138,13 +144,31 @@ class Listener:
         self.device = device  # sounddevice index/name substring, None = default
         self.debug = debug
         self.transcriber = transcriber  # optional fn(pcm16) -> text (see stt.py)
+        self.log = lambda line: None  # set by the app to append to retro.log
         self.restart = None  # threading.Event set by the tray to reopen the mic
         self._awaiting_until = 0.0
 
+    def _wake_cut(self, words, utt_start_sample):
+        """Byte offset just past the wake keyword, from Vosk word timings -
+        Whisper then sees only the command audio."""
+        key = self.wake.split()[-1]
+        for wd in words[:3]:
+            if difflib.SequenceMatcher(None, wd["word"], key).ratio() >= 0.75:
+                return (int(wd["end"] * 16000) - utt_start_sample) * 2
+        return 0
+
     def _better(self, fallback, audio, awaiting):
-        """Re-transcribe the utterance with Whisper when available. Whisper wins
-        on titles/artists but garbles short commands sometimes ("pause"->"poss"),
-        so prefer whichever transcription actually parses as a command."""
+        """Decide which transcription to dispatch.
+
+        Fast path: control commands (skip/pause/volume/...) have no free text;
+        Vosk nails those fixed words and Whisper hallucinates on sub-second
+        clips - so if Vosk's text already parses to one, use it, instantly.
+
+        Quality path: search commands carry a title, which Vosk garbles -
+        re-transcribe the audio with Whisper and prefer whichever text parses."""
+        fb_intent = parse(fallback)
+        if fb_intent and fb_intent[0] not in NEEDS_WHISPER:
+            return fallback
         if not self.transcriber or audio is None:
             return fallback
         try:
@@ -153,12 +177,14 @@ class Listener:
             return fallback
         if self.debug and w:
             print(f"[whisper] {w}")
+        self.log(f"whisper: {w!r}")
         if not w:
             return fallback
-        cand = w if awaiting else strip_wake(w, self.wake)
+        rest = strip_wake(w, self.wake)  # audio may or may not include the wake
+        cand = rest if rest else w
         if cand and parse(cand):
             return cand
-        if parse(fallback):
+        if fb_intent:
             return fallback
         return cand or fallback
 
@@ -192,6 +218,7 @@ class Listener:
         while not stop.is_set():  # outer loop: one pass per mic device
             self.restart.clear()
             rec = KaldiRecognizer(model, 16000)
+            rec.SetWords(True)  # word timings, used to slice off the wake phrase
             try:
                 # trailing-silence window before an utterance finalizes:
                 # (max unfinished, silence after speech, max utterance length)
@@ -206,6 +233,7 @@ class Listener:
 
             hinted = False  # one wake hint per utterance
             utt = bytearray()  # raw audio of the current utterance, for Whisper
+            fed = 0  # samples fed to this recognizer (maps word times to utt)
             with sd.RawInputStream(samplerate=16000, blocksize=4000,
                                    dtype="int16", channels=1, callback=cb,
                                    device=self.device):
@@ -219,15 +247,23 @@ class Listener:
                         continue  # drop audio while muted
                     utt.extend(data)
                     del utt[:-16000 * 2 * 20]  # cap at 20s
+                    fed += len(data) // 2
                     if rec.AcceptWaveform(data):
                         hinted = False
-                        text = json.loads(rec.Result()).get("text", "").strip()
+                        res = json.loads(rec.Result())
+                        text = res.get("text", "").strip()
                         audio = bytes(utt)
+                        utt_start = fed - len(utt) // 2
                         utt.clear()
-                        if self.debug and text:
+                        if not text:
+                            continue
+                        if self.debug:
                             print(f"[heard] {text}")
-                        if text:
-                            self.feed_text(text, audio=audio)
+                        self.log(f"vosk: {text!r}")
+                        cut = self._wake_cut(res.get("result", []), utt_start)
+                        if 0 < cut < len(audio):
+                            audio = audio[cut:]
+                        self.feed_text(text, audio=audio)
                     elif not hinted:
                         partial = json.loads(rec.PartialResult()).get("partial", "")
                         if strip_wake(partial, self.wake) is not None:

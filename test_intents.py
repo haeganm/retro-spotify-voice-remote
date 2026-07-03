@@ -78,20 +78,26 @@ lis.feed_text("the", now=401)                # noise must NOT eat the window...
 lis.feed_text("skip", now=403)               # ...so the real command still lands
 assert heard == ["play thriller", "<wake>", "pause", "<wake>", "<wake>", "skip"], heard
 
-# Whisper re-transcription: replaces Vosk's garble when audio is available,
-# falls back to Vosk text when whisper fails or drops the wake phrase.
+# Whisper routing: search commands (free text) go through the transcriber;
+# control commands take the Vosk fast path and must NEVER touch Whisper.
+def no_whisper(a):
+    raise AssertionError("control command must not call whisper")
+
 heard2 = []
 lis2 = Listener("unused", "hey retro", on_command=heard2.append)
 lis2.transcriber = lambda a: "hey retro play brain stew by green day"
-lis2.feed_text("hey retro play brainstew", now=1, audio=b"pcm")
-lis2.transcriber = lambda a: (_ for _ in ()).throw(RuntimeError)  # whisper crash
-lis2.feed_text("hey retro pause", now=2, audio=b"pcm")
-lis2.transcriber = lambda a: "unrelated mumble"  # no wake in whisper text
-lis2.feed_text("hey retro next song", now=3, audio=b"pcm")
-lis2.transcriber = lambda a: "skip"  # window utterance: no wake expected
+lis2.feed_text("hey retro play brainstew", now=1, audio=b"pcm")   # search -> whisper
+lis2.transcriber = no_whisper
+lis2.feed_text("hey retro pause", now=2, audio=b"pcm")            # control -> fast path
+lis2.feed_text("hey retro the skip the", now=3, audio=b"pcm")     # defilled control
 lis2.feed_text("hey retro", now=4)
-lis2.feed_text("the skip", now=5, audio=b"pcm")
-assert heard2 == ["play brain stew by green day", "pause", "next song", "skip"], heard2
+lis2.feed_text("skip", now=5, audio=b"pcm")                       # window control
+lis2.transcriber = lambda a: (_ for _ in ()).throw(RuntimeError)  # whisper crash
+lis2.feed_text("hey retro play thriller", now=6, audio=b"pcm")    # -> vosk fallback
+lis2.transcriber = lambda a: "unrelated mumble"  # whisper text has no wake, no parse
+lis2.feed_text("hey retro play daft punk", now=7, audio=b"pcm")   # -> vosk fallback
+assert heard2 == ["play brain stew by green day", "pause", "the skip the",
+                  "skip", "play thriller", "play daft punk"], heard2
 
 # Search scoring: exact-but-obscure must beat popular-but-partial.
 from retro.player import NO_DEVICE, Player, query_variants, score

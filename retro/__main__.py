@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import threading
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -121,6 +122,21 @@ def set_startup(enable):
                    check=True, creationflags=0x08000000)  # CREATE_NO_WINDOW
 
 
+def make_logger(d):
+    """Append-only transcript log (what each engine heard, what ran) so
+    recognition misses can be diagnosed from ground truth. Trimmed on start."""
+    logf = d / "retro.log"
+    if logf.exists():
+        lines = logf.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]
+        logf.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    lock = threading.Lock()
+
+    def log(line):
+        with lock, open(logf, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%m-%d %H:%M:%S')} {line}\n")
+    return log
+
+
 def main():
     ap = argparse.ArgumentParser(prog="spotify-retro")
     ap.add_argument("--say", help="run one command as text (no mic) and exit, e.g. --say 'play daft punk'")
@@ -161,15 +177,19 @@ def main():
     QUIET_OK = ("Playing", "Queued", "Paused", "Resuming", "Skipped",
                 "Previous", "Volume", "Shuffle")
 
+    log = make_logger(d)
+
     def on_command(text):
         def work():  # off the mic thread: API round trips must not deafen the app
             intent = voice.parse(text)
             if not intent:
+                log(f"cmd: {text!r} -> no intent")
                 if cfg["sound"]:
                     play_wav("err.wav")
                 notify(f"Didn't catch that: '{text}'")
                 return
             msg = player.handle(*intent)
+            log(f"cmd: {text!r} -> {intent} -> {msg!r}")
             quiet = (cfg["notify"] == "smart" and intent[0] != "now_playing"
                      and msg.startswith(QUIET_OK))
             if quiet:
@@ -188,6 +208,7 @@ def main():
         on_wake=lambda: notify("Listening..."),
         on_wake_hint=(lambda: play_wav("wake.wav")) if cfg["sound"] else lambda: None,
         device=cfg["input_device"], debug=args.debug)
+    listener.log = log
     listener.restart = threading.Event()
 
     def toggle(icon_, item):
@@ -246,8 +267,8 @@ def main():
         decode as themselves instead of a dictionary word."""
         if cfg["stt"] != "whisper":
             return
-        try:
-            hotwords = ", ".join(sorted(player.user_artists()))[:300] or None
+        try:  # capped: a long bias string swamps short clips
+            hotwords = ", ".join(player.user_artists()[:25])[:300] or None
         except Exception:
             hotwords = None
         tr = stt.make_transcriber(cfg["whisper_model"], hotwords=hotwords)
