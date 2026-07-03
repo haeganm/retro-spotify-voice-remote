@@ -61,29 +61,44 @@ Everything left of the Spotify API runs offline on your machine.
 - An NVIDIA GPU is optional — the installer detects one and enables faster,
   more accurate recognition automatically
 
-## Install (one command, $0)
+## Install ($0, ~5 minutes)
+
+**Step 1 — get Python** (skip if you have 3.10-3.12):
 
 ```powershell
-git clone https://github.com/YOURNAME/retro
+winget install Python.Python.3.12
+```
+
+**Step 2 — get Retro** (either way works):
+
+```powershell
+git clone https://github.com/haeganm/retro
 cd retro
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-The installer creates an isolated environment, installs the tested dependency
-set (`requirements.lock`), enables GPU acceleration if you have an NVIDIA
-card, and puts a **Retro** icon on your desktop.
+&nbsp;&nbsp;&nbsp;&nbsp;*No git? Click **Code → Download ZIP** on this page, extract it
+anywhere permanent (not Downloads), then right-click `install.ps1` → **Run with
+PowerShell**.*
 
-Then the one-time human part (5 minutes):
+The installer creates an isolated environment (nothing touches your system
+Python), installs the tested dependency set, enables GPU acceleration if you
+have an NVIDIA card, and puts a **Retro** icon on your desktop.
 
-1. Create a free app at <https://developer.spotify.com/dashboard>
-   - Redirect URI (exactly): `http://127.0.0.1:8888/callback`
-   - API: Web API
-2. Double-click the desktop icon, paste your app's **Client ID** into the
-   dialog, and approve the browser sign-in once (PKCE — no client secret
-   involved). The speech models (~120 MB) download on first run.
+**Step 3 — connect your Spotify** (one time):
 
-After that it just runs. Tray menu → **Start with Windows** makes it launch
-silently at login.
+1. Go to <https://developer.spotify.com/dashboard>, log in with your Spotify
+   account, and click **Create app**:
+   - App name / description: anything ("Retro" works)
+   - **Redirect URI** (must be exact): `http://127.0.0.1:8888/callback` — click **Add**
+   - API: **Web API** → Save
+2. On the app's **Settings** page, copy the **Client ID**.
+3. Double-click the **Retro** icon on your desktop, paste the Client ID into
+   the dialog, and approve the browser sign-in once. The speech models
+   (~120 MB) download automatically on first run.
+
+Done. Retro now lives in your system tray. Tray menu → **Start with Windows**
+makes it launch silently at login.
 
 <details><summary>Developer install (no installer)</summary>
 
@@ -93,37 +108,58 @@ retro                # console entry point
 ```
 </details>
 
-## Commands
+## Using the remote — read this first
 
-Say the wake phrase (**"hey retro"** by default — a short beep confirms it heard
-you), then:
+> **Retro is a remote control, not a chatbot.** It matches *specific command
+> patterns* — it cannot chat, answer questions, or figure out "play something
+> chill for studying". Stick to the phrases below and it's fast and reliable;
+> freestyle and it will say *"didn't catch that"*.
+
+**The rhythm:** say the wake phrase, then the command —
+
+- **One breath** (fastest): *"hey retro, play bohemian rhapsody"*
+- **Two-step**: say *"hey retro"*, wait for the **chime**, then speak the
+  command within ~6 seconds. Use this when the room is noisy.
+
+**What the sounds mean:** chime = it heard the wake word · soft pop = command
+done · low "uh-oh" = it heard you but couldn't match a command · the
+corner overlay and tray-icon tooltip show exactly what it did.
+
+### The commands
 
 | Say | Does |
 |---|---|
 | `play <song>` / `play <song> by <artist>` | search and play a track |
 | `queue <song>` / `play <song> next` / `add <song> to the queue` | add to queue |
 | `play the artist <name>` / `play songs by <name>` | play an artist |
-| `play the album <name>` / `play my playlist <name>` | album / your playlists |
-| `play my liked songs` | shuffle your liked songs |
+| `play the album <name>` | play an album |
+| `playlist <name>` / `play my playlist <name>` | your playlists (names with numbers work: say "seven point o" for "7.0") |
+| `play my liked songs` | shuffle your Liked Songs |
 | `pause` / `stop` | pause |
 | `play` / `resume` | resume |
 | `next` / `skip` | next track |
-| `previous` / `go back` | previous track |
-| `volume up` / `turn it up` / `set volume to fifty` | Spotify volume (never system volume) |
-| `what's playing` | show current track |
+| `previous` / `go back` | previous track (restarts the track if there's no previous) |
+| `volume up` / `volume down` / `turn it up` | volume ±10 (Spotify volume, never system volume) |
+| `set volume to fifty` | volume 0-100 |
+| `what's playing` | show the current track |
 | `shuffle on` / `shuffle off` | shuffle |
-| `put it back` / `go back to what was playing` | undo - restore what was on before |
+| `put it back` / `go back to what was playing` | undo — restore what was playing before |
 
-Say it in one breath ("hey retro play thriller") or wait for the beep /
-*Listening...* notification after the wake phrase.
+### Getting the best recognition
 
-Test without a mic: `retro --say "play daft punk"` ·
-Debug what it hears: `retro --debug`, or check the transcript log at
-`%APPDATA%\Retro\retro.log` (every recognition + command outcome) ·
-List everything it failed to understand: `retro --misses`.
-
-Control commands (skip/pause/volume/...) dispatch instantly from the wake-word
-engine; only title-carrying commands (play/queue/...) take the ~0.6s Whisper pass.
+- **Include the artist for anything that isn't famous**: *"play brain stew by
+  green day"* beats *"play brain stew"*. Title + artist is the single biggest
+  accuracy win.
+- **Speak at a normal pace** and let the sentence end — Retro processes when
+  you stop talking (about half a second of silence).
+- Say **the actual title**, not a description. "play that one from the gym
+  playlist" won't work; "playlist gym" will.
+- Control words ("skip", "pause") respond instantly; song searches take a
+  moment (speech transcription + Spotify search).
+- If it keeps mishearing a phrase, run `retro --misses` to see what it
+  actually heard — the transcript log (`%APPDATA%\Retroetro.log`) shows
+  both recognition engines' hearings for every command.
+- Test any command without speaking: `retro --say "play daft punk"`.
 
 ## Config
 
