@@ -254,15 +254,24 @@ class Player:
         return "Resuming"
 
     def pause(self):
-        self.sp.pause_playback()
+        dev = self._device()
+        if not dev:
+            return NO_DEVICE
+        self.sp.pause_playback(device_id=dev)
         return "Paused"
 
     def next_track(self):
-        self.sp.next_track()
+        dev = self._device()
+        if not dev:
+            return NO_DEVICE
+        self.sp.next_track(device_id=dev)
         return "Skipped"
 
     def previous_track(self):
-        self.sp.previous_track()
+        dev = self._device()
+        if not dev:
+            return NO_DEVICE
+        self.sp.previous_track(device_id=dev)
         return "Previous track"
 
     def set_volume(self, n):
