@@ -385,13 +385,16 @@ def main():
         yield pystray.MenuItem("Automatic (recommended)", pick_mic(None),
                                checked=lambda item: cfg["input_device"] is None,
                                radio=True)
-        seen = set()
+        seen, bt = set(), set()
         for _, name in input_devices():
             fam = mic_family(name)
-            if fam in seen:
-                continue
+            low = name.lower()
+            if "hands-free" in low or "bthhfenum" in low or low.startswith("headset"):
+                bt.add(fam)  # Bluetooth mic: using it silences A2DP music on Windows
             seen.add(fam)
-            yield pystray.MenuItem(fam, pick_mic(fam),
+        for fam in sorted(seen):
+            label = f"{fam}  (mutes music - Bluetooth)" if fam in bt else fam
+            yield pystray.MenuItem(label, pick_mic(fam),
                                    checked=lambda item, fam=fam: cfg["input_device"] == fam,
                                    radio=True)
 
