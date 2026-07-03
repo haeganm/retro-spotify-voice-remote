@@ -1,34 +1,55 @@
-<p align="center"><img src="retro/assets/icon.png" width="128" alt="Retro"></p>
+<p align="center"><img src="docs/banner.png" alt="Retro - personalized voice music remote" width="100%"></p>
+
+<p align="center">
+  <a href="https://github.com/haeganm/retro/actions/workflows/ci.yml"><img src="https://github.com/haeganm/retro/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0">
+  <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-blue" alt="Python 3.10-3.12">
+  <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6" alt="Windows 10/11">
+  <img src="https://img.shields.io/badge/cost-%240-1ed760" alt="$0">
+</p>
 
 # Retro
 
-A free, local voice remote **for Spotify Premium**. Runs in your system tray, listens
-offline (speech never leaves your machine), and controls whatever device Spotify
-is already playing on — desktop, phone, speaker.
+A free, local voice remote **for Spotify Premium**. Runs in your system tray,
+listens offline (speech never leaves your machine), and controls whatever
+device Spotify is already playing on — desktop, phone, speaker.
 
-> "hey retro, play bohemian rhapsody"
+> **"hey retro, play bohemian rhapsody"**
 
-## How it works
+<!-- demo GIF goes here: docs/demo.gif -->
 
-There's no music player in here. Spotify Connect's Web API *is* the remote:
-**mic → offline speech recognition → intent → one HTTPS call to
-api.spotify.com**. The only network traffic is the Spotify API itself.
+## Why it's different
 
-Speech is a two-stage hybrid, all offline: [Vosk](https://alphacephei.com/vosk/)
-streams the mic and spots the wake phrase instantly; the command utterance is
-then re-transcribed by [Whisper](https://github.com/SYSTRAN/faster-whisper)
-(GPU when available, ~0.15s; CPU otherwise, ~0.6s), which is far better at
-song titles and artist names. Whichever transcription parses as a valid
-command wins.
+- **It knows *your* music.** Your top artists, playlists, and liked songs are
+  injected into the recognizer's vocabulary and boosted in search ranking — so
+  niche artist names and personal playlist names ("7.0", spoken as
+  "seven point o") resolve correctly when generic assistants fail.
+- **It forgives how people actually talk.** Two speech engines hear every
+  command and their transcriptions *compete* in a fuzzy-ranked search — a
+  garbled "play money to work by eat" still finds *Money Twërk by Yeat*.
+  Control words ("skip", "pause") dispatch instantly with zero transcription
+  latency.
+- **Zero cloud, zero cost, zero secrets.** There is no server and no account:
+  Spotify Connect is the player, auth is PKCE against your own free developer
+  app, speech is processed entirely on-device (GPU-accelerated Whisper when
+  you have an NVIDIA card), and your session token is encrypted at rest.
 
-It also learns you: your top Spotify artists become Whisper *hotwords* (so
-"Yeat" decodes as Yeat, not "beat") and get a ranking boost in search — an
-artist you actually listen to beats a sound-alike stranger.
+## Architecture
 
-Song lookup doesn't trust Spotify's #1 hit: candidates from several search
-strategies are ranked by fuzzy similarity to what you actually said, so long
-titles and non-chart-toppers resolve correctly ("play cigarettes out the window
-by tv girl" finds TV Girl, not whatever is popular this week).
+```mermaid
+flowchart LR
+    MIC([Microphone]) --> VOSK["Vosk (streaming)<br/>wake-word spotting"]
+    VOSK -- "hey retro..." --> CUT[wake-phrase<br/>audio slicing]
+    CUT --> WHISPER["Whisper (GPU/CPU)<br/>command transcription<br/>+ personal hotwords"]
+    VOSK -. "control words<br/>(skip/pause/...)" .-> INTENT
+    WHISPER --> INTENT[intent parser<br/>+ homophone aliases]
+    INTENT --> SEARCH["dual-hearing fuzzy search<br/>artist affinity + ranking"]
+    SEARCH --> API[Spotify Connect<br/>Web API]
+    API --> DEV([Your Spotify device])
+    INTENT -. feedback .-> OSD[instant OSD +<br/>sound cues]
+```
+
+Everything left of the Spotify API runs offline on your machine.
 
 ## Requirements
 
@@ -182,9 +203,13 @@ shortcut (plus tray → "Start with Windows" off, or delete the Startup shortcut
 
 ## License & credits
 
-MIT — see [LICENSE](LICENSE). Built on [Vosk](https://alphacephei.com/vosk/)
-(Apache-2.0), [faster-whisper](https://github.com/SYSTRAN/faster-whisper) /
-OpenAI Whisper (MIT), and [spotipy](https://github.com/spotipy-dev/spotipy) (MIT).
+**GPL-3.0** — see [LICENSE](LICENSE). Use it, learn from it, fork it — but
+derivatives must stay open source with attribution. Copyright (C) 2026
+Haegan McGarry.
+
+Built on [Vosk](https://alphacephei.com/vosk/) (Apache-2.0),
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) / OpenAI Whisper
+(MIT), and [spotipy](https://github.com/spotipy-dev/spotipy) (MIT).
 
 ---
 
