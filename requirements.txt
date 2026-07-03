@@ -4,3 +4,4 @@ spotipy
 pystray
 Pillow
 faster-whisper
+pyttsx3

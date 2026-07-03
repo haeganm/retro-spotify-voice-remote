@@ -16,7 +16,11 @@ dependencies = [
     "pystray",
     "Pillow",
     "faster-whisper",
+    "pyttsx3",
 ]
+
+[project.optional-dependencies]
+gpu = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12"]
 
 [project.scripts]
 spotify-retro = "retro.__main__:main"

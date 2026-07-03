@@ -44,6 +44,11 @@ CASES = {
     "playlist light songs": ("play_playlist", "light songs"),
     "play the playlist called gym": ("play_playlist", "gym"),
     "playlist seven point o": ("play_playlist", "seven point o"),
+    "switch to my phone": ("transfer", "phone"),
+    "play it on the speaker": ("transfer", "speaker"),
+    "transfer to the computer": ("transfer", "computer"),
+    "put it back": ("put_back", None),
+    "go back to what was playing": ("put_back", None),
     "queue mr brightside": ("queue_track", "mr brightside"),
     "queue up bohemian rhapsody": ("queue_track", "bohemian rhapsody"),
     "add stand by me to the queue": ("queue_track", "stand by me"),
@@ -136,14 +141,17 @@ assert list(query_variants("stand by me by ben e king")) == [
 
 
 class FakeSp:
-    def __init__(self, tracks=(), device=True, playlists=(), liked=(), fav=()):
+    def __init__(self, tracks=(), device=True, playlists=(), liked=(), fav=(),
+                 device_list=()):
         self.tracks = dict(tracks)  # query -> [(name, artist, popularity)]
         self.device = device
+        self.device_list = list(device_list)
         self.playlists = list(playlists)
         self.liked = list(liked)
         self.fav = list(fav)        # user's top artists
         self.played = None
         self.queued = None
+        self.transferred = None
 
     def current_user_top_artists(self, limit, time_range):
         return {"items": [{"name": n} for n in self.fav]}
@@ -152,10 +160,20 @@ class FakeSp:
         self.queued = uri
 
     def current_playback(self):
-        return {"device": {"id": "d1", "volume_percent": 50}} if self.device else None
+        if not self.device:
+            return None
+        return {"device": {"id": "d1", "volume_percent": 50},
+                "item": {"uri": "uri:old", "name": "Old Song"},
+                "context": {"uri": "ctx:oldplaylist"}, "progress_ms": 1234}
 
     def devices(self):
-        return {"devices": []}
+        return {"devices": self.device_list}
+
+    def transfer_playback(self, device_id, force_play=False):
+        self.transferred = device_id
+
+    def volume(self, n, device_id=None):
+        self.vol = n
 
     def search(self, q, type, limit):
         items = [{"uri": "uri:" + n, "name": n, "popularity": pop,
@@ -168,11 +186,9 @@ class FakeSp:
     def current_user_saved_tracks(self, limit):
         return {"items": [{"track": {"uri": "uri:" + n}} for n in self.liked]}
 
-    def start_playback(self, device_id=None, uris=None, context_uri=None):
+    def start_playback(self, device_id=None, uris=None, context_uri=None, **kw):
         self.played = uris if uris else context_uri
-
-    def volume(self, n, device_id=None):
-        self.vol = n
+        self.play_kw = kw
 
 
 def fake_player(**kw):
@@ -244,6 +260,29 @@ assert msg.startswith("No playlist like") and "Closest:" in msg, msg
 p = fake_player(liked=["a", "b", "c"])
 assert p.handle("play_liked") == "Playing your liked songs"
 assert sorted(p.sp.played) == ["uri:a", "uri:b", "uri:c"]
+
+# transfer: fuzzy device by type synonym and by name
+p = fake_player(device_list=[{"id": "ph", "name": "Haegan's iPhone", "type": "Smartphone"},
+                             {"id": "pc", "name": "DESKTOP-AB12", "type": "Computer"}])
+assert p.handle("transfer", "phone") == "Playing on Haegan's iPhone"
+assert p.sp.transferred == "ph"
+assert p.handle("transfer", "desktop a b twelve|desktop ab 12") == "Playing on DESKTOP-AB12"
+assert "Available:" in p.handle("transfer", "toaster oven")
+
+# put it back: snapshot on play, restore with context + position
+p = fake_player(tracks={"thriller": [("Thriller", "MJ", 90)]})
+p.handle("play_track", "thriller")
+assert p.handle("put_back") == "Back to Old Song"
+assert p.sp.played == "ctx:oldplaylist" and p.sp.play_kw["position_ms"] == 1234
+assert fake_player().handle("put_back") == "Nothing to go back to"
+
+# duck/unduck bookkeeping
+p = fake_player()
+p.duck()
+assert p.sp.vol == 15
+p.unduck()
+assert p.sp.vol == 50
+p.unduck()  # idempotent
 
 assert fake_player().handle("play_track", "anything") == "No results for 'anything'"
 assert fake_player(device=False).handle("play_track", "x") == NO_DEVICE

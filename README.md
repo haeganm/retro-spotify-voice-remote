@@ -75,13 +75,16 @@ you), then:
 | `volume up` / `turn it up` / `set volume to fifty` | Spotify volume (never system volume) |
 | `what's playing` | show current track |
 | `shuffle on` / `shuffle off` | shuffle |
+| `switch to my phone` / `play it on the speaker` | move playback to another device |
+| `put it back` / `go back to what was playing` | undo - restore what was on before |
 
 Say it in one breath ("hey retro play thriller") or wait for the beep /
 *Listening...* notification after the wake phrase.
 
 Test without a mic: `spotify-retro --say "play daft punk"` ·
 Debug what it hears: `spotify-retro --debug`, or check the transcript log at
-`%APPDATA%\SpotifyRetro\retro.log` (every recognition + command outcome).
+`%APPDATA%\SpotifyRetro\retro.log` (every recognition + command outcome) ·
+List everything it failed to understand: `spotify-retro --misses`.
 
 Control commands (skip/pause/volume/...) dispatch instantly from the wake-word
 engine; only title-carrying commands (play/queue/...) take the ~0.6s Whisper pass.
@@ -104,11 +107,18 @@ engine; only title-carrying commands (play/queue/...) take the ~0.6s Whisper pas
 
 - `model`: the Vosk wake-word model - `"small"` (default) or `"medium"`
 - `stt`: `"whisper"` (default) or `"vosk"` to skip Whisper on very weak machines
-- `whisper_model`: `"base.en"` (default, fast) or `"small.en"` (more accurate, ~4x slower)
+- `whisper_model`: `"auto"` (default: small.en on GPU, base.en on CPU) or any
+  faster-whisper model name
+- `device`: `"auto"` (default: NVIDIA GPU when present - install
+  `nvidia-cublas-cu12 nvidia-cudnn-cu12` - else CPU), `"cuda"`, or `"cpu"`
 - `input_device`: pick a microphone from the tray menu instead of editing this
 - `sound`: wake chime + success/error cues; `false` to disable
-- `notify`: `"smart"` (default - subtle sound for successes, toasts only for
-  errors and answers; the tray tooltip always shows the last action) or
+- `speak`: `true` (default) - results are spoken aloud (offline SAPI voice);
+  `false` for toasts only
+- `duck`: `true` (default) - music volume dips while you speak a command,
+  restored right after (big win for speaker setups)
+- `notify`: `"smart"` (default - subtle sound for control commands, voice/toast
+  for results and errors; the tray tooltip always shows the last action) or
   `"all"` to toast everything
 
 ## Tray menu

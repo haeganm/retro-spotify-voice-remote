@@ -9,7 +9,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from . import stt, voice
+from . import speak, stt, voice
 from .player import Player
 
 MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/models
@@ -21,8 +21,8 @@ MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/mode
 # errors and answers; "all" = toast everything.
 DEFAULTS = {"wake_phrase": "hey retro", "model": "small",
             "input_device": None, "sound": True,
-            "stt": "whisper", "whisper_model": "base.en",
-            "notify": "smart"}
+            "stt": "whisper", "whisper_model": "auto", "device": "auto",
+            "notify": "smart", "speak": True, "duck": True}
 ICON = Path(__file__).parent / "assets" / "icon.png"
 ICON_ICO = Path(__file__).parent / "assets" / "icon.ico"
 
@@ -141,9 +141,17 @@ def main():
     ap = argparse.ArgumentParser(prog="spotify-retro")
     ap.add_argument("--say", help="run one command as text (no mic) and exit, e.g. --say 'play daft punk'")
     ap.add_argument("--debug", action="store_true", help="print everything the recognizer hears")
+    ap.add_argument("--misses", action="store_true", help="show recent unrecognized commands from the log")
     args = ap.parse_args()
 
     d = app_dir()
+    if args.misses:
+        logf = d / "retro.log"
+        lines = logf.read_text(encoding="utf-8", errors="replace").splitlines() if logf.exists() else []
+        for line in lines:
+            if "no intent" in line:
+                print(line)
+        return
     cfg = load_config(d)
     player = Player(cfg["client_id"], d / "token.json")
 
@@ -172,41 +180,59 @@ def main():
         except Exception:
             pass
 
-    # successes get a subtle sound + tooltip update; toasts only carry news
-    # you must read (errors, "what's playing")
-    QUIET_OK = ("Playing", "Queued", "Paused", "Resuming", "Skipped",
-                "Previous", "Volume", "Shuffle")
+    # fixed control confirmations get a subtle pop; search results, answers
+    # and errors are spoken (or toasted when speech is off)
+    POP_OK = ("Paused", "Resuming", "Skipped", "Previous", "Volume", "Shuffle")
+    VOLUME_ACTIONS = {"set_volume", "volume_up", "volume_down"}
 
     log = make_logger(d)
+    say = speak.make_speaker() if cfg["speak"] else None
+
+    def announce(msg):
+        print(msg)
+        icon.title = f"Spotify Retro - {msg}"[:120]
+        if say:
+            say(msg)
+        else:
+            notify(msg)
 
     def on_command(text):
         def work():  # off the mic thread: API round trips must not deafen the app
             intent = voice.parse(text)
             if not intent:
                 log(f"cmd: {text!r} -> no intent")
-                if cfg["sound"]:
+                player.unduck()
+                if cfg["sound"] and not say:
                     play_wav("err.wav")
-                notify(f"Didn't catch that: '{text}'")
+                announce(f"Didn't catch that: '{text}'")
                 return
             msg = player.handle(*intent)
             log(f"cmd: {text!r} -> {intent} -> {msg!r}")
-            quiet = (cfg["notify"] == "smart" and intent[0] != "now_playing"
-                     and msg.startswith(QUIET_OK))
-            if quiet:
+            if intent[0] in VOLUME_ACTIONS:
+                player._ducked = None  # user set a volume: don't override it
+            else:
+                player.unduck()
+            if (cfg["notify"] == "smart" and intent[0] != "now_playing"
+                    and msg.startswith(POP_OK)):
                 if cfg["sound"]:
                     play_wav("ok.wav")
                 print(msg)
-                icon.title = f"Spotify Retro - {msg}"  # hover shows the last action
+                icon.title = f"Spotify Retro - {msg}"[:120]
             else:
-                if cfg["sound"] and not msg.startswith(QUIET_OK) and intent[0] != "now_playing":
-                    play_wav("err.wav")
-                notify(msg)
+                announce(msg)
         threading.Thread(target=work, daemon=True).start()
+
+    def wake_hint():
+        if cfg["sound"]:
+            play_wav("wake.wav")
+        if cfg["duck"]:
+            threading.Thread(target=player.duck, daemon=True).start()
+            threading.Timer(10, player.unduck).start()  # safety restore
 
     listener = voice.Listener(
         model, cfg["wake_phrase"], on_command,
         on_wake=lambda: notify("Listening..."),
-        on_wake_hint=(lambda: play_wav("wake.wav")) if cfg["sound"] else lambda: None,
+        on_wake_hint=wake_hint,
         device=cfg["input_device"], debug=args.debug)
     listener.log = log
     listener.restart = threading.Event()
@@ -270,15 +296,17 @@ def main():
         try:  # capped: a long bias string swamps short clips
             words = player.user_artists()[:25]
             words += [p["name"] for p in player._my_playlists()]
-            hotwords = ", ".join(dict.fromkeys(words))[:400] or None
+            words += player.user_titles()
+            hotwords = ", ".join(dict.fromkeys(words))[:500] or None
         except Exception:
             hotwords = None
-        tr = stt.make_transcriber(cfg["whisper_model"], hotwords=hotwords)
+        tr, used = stt.make_transcriber(cfg["whisper_model"], hotwords=hotwords,
+                                        device=cfg["device"])
         if tr:
             tr(b"\x00" * 32000)  # warm up the compute graph
             listener.transcriber = tr
-            print(f"Whisper ({cfg['whisper_model']}) ready"
-                  + (f", biased to {hotwords.count(',') + 1} artists" if hotwords else ""))
+            print(f"Whisper ready ({used})"
+                  + (f", biased to {hotwords.count(',') + 1} names" if hotwords else ""))
 
     threading.Thread(target=run_listener, daemon=True).start()
     threading.Thread(target=load_whisper, daemon=True).start()

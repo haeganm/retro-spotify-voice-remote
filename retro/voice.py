@@ -65,6 +65,9 @@ INTENTS = [
     _i(r"play (?:the |my )?(.+) playlist", "play_playlist", lambda m: m.group(1)),
     # "liked" is heard as "like"/"light" constantly
     _i(r"play (?:my )?(?:(?:liked?|light|favou?rite|saved) (?:songs?|tracks?|music)|favou?rites?|likes)", "play_liked"),
+    _i(r"(?:switch|transfer|move|connect)(?: (?:playback|music|it|this))?(?: over)? to (?:the |my )?(.+)", "transfer", lambda m: m.group(1)),
+    _i(r"play (?:it |this |music )?on (?:the |my )?(.+)", "transfer", lambda m: m.group(1)),
+    _i(r"put it back|go back to what was playing|play what was (?:playing |on )?before|undo(?: that)?", "put_back"),
     # "queue" decodes as its homophones constantly
     _i(r"(?:(?:queue|que|cue|q)(?: up)?|add) (.+?)(?: to (?:the |my )?(?:queue|que|cue|q))?", "queue_track", lambda m: m.group(1)),
     _i(r"play (.+) next", "queue_track", lambda m: m.group(1)),
@@ -131,7 +134,7 @@ def parse(text):
 # often drops the verb) onto the intent Vosk identified.
 NEEDS_WHISPER = {"play_track": "play", "queue_track": "queue",
                  "play_playlist": "play playlist", "play_album": "play the album",
-                 "play_artist": "play the artist"}
+                 "play_artist": "play the artist", "transfer": "switch to"}
 
 
 def strip_wake(text, wake):
@@ -225,7 +228,12 @@ class Listener:
             if not defill(text):
                 return  # pure noise ("the") must not eat the command window
             self._awaiting_until = 0.0
-            self.on_command(self._better(text, audio, awaiting=True))
+            cmd = self._better(text, audio, awaiting=True)
+            # a window utterance IS a command; if the verb got eaten
+            # ("7 0 kanye west bangers"), assume "play"
+            if parse(cmd) is None and parse(f"play {cmd}"):
+                cmd = f"play {cmd}"
+            self.on_command(cmd)
             return
         rest = strip_wake(text, self.wake)
         if rest:

@@ -74,7 +74,8 @@ def main():
     transcriber = None
     if args.stt == "whisper":
         from retro.stt import make_transcriber
-        transcriber = make_transcriber(hotwords=args.hotwords)
+        transcriber, used = make_transcriber(hotwords=args.hotwords)
+        print(f"whisper: {used}")
         transcriber(b"\x00" * 32000)  # warm up
 
     tts = Path(tempfile.gettempdir()) / "spotify-retro-e2e"

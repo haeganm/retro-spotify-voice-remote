@@ -138,6 +138,96 @@ class Player:
         self._arts_cache = list(names)
         return self._arts_cache
 
+    def user_titles(self):
+        """Titles of the user's 50 most recent liked tracks (hotword fodder)."""
+        titles = getattr(self, "_titles_cache", None)
+        if titles is not None:
+            return titles
+        try:
+            titles = [it["track"]["name"]
+                      for it in self.sp.current_user_saved_tracks(limit=50)["items"]]
+        except Exception:
+            titles = []
+        self._titles_cache = titles
+        return titles
+
+    def _snapshot(self):
+        """Remember what's playing so 'put it back' can restore it."""
+        try:
+            pb = self.sp.current_playback()
+            if pb and pb.get("item"):
+                self._undo = {
+                    "context": (pb.get("context") or {}).get("uri"),
+                    "track": pb["item"]["uri"],
+                    "name": pb["item"]["name"],
+                    "pos": pb.get("progress_ms") or 0,
+                }
+        except Exception:
+            pass
+
+    def put_back(self):
+        undo = getattr(self, "_undo", None)
+        if not undo:
+            return "Nothing to go back to"
+        dev = self._device()
+        if not dev:
+            return NO_DEVICE
+        if undo["context"]:
+            self.sp.start_playback(device_id=dev, context_uri=undo["context"],
+                                   offset={"uri": undo["track"]},
+                                   position_ms=undo["pos"])
+        else:
+            self.sp.start_playback(device_id=dev, uris=[undo["track"]],
+                                   position_ms=undo["pos"])
+        return f"Back to {undo['name']}"
+
+    _DEVICE_TYPES = {"phone": "smartphone", "mobile": "smartphone",
+                     "computer": "computer", "laptop": "computer", "pc": "computer",
+                     "desktop": "computer", "speaker": "speaker", "tv": "tv"}
+
+    def transfer(self, name):
+        """Move playback to another Spotify Connect device by name or kind."""
+        name = _queries(name)[0]
+        devices = self.sp.devices()["devices"]
+        if not devices:
+            return "No Spotify devices found"
+        want_type = self._DEVICE_TYPES.get(_norm(name))
+
+        def dev_score(dv):
+            s = _sim(_norm(name), _norm(dv["name"]))
+            if want_type and dv.get("type", "").lower() == want_type:
+                s = max(s, 0.9)
+            return s
+
+        best = max(devices, key=dev_score)
+        if dev_score(best) < 0.5:
+            return f"No device like '{name}'. Available: " + \
+                ", ".join(d["name"] for d in devices[:4])
+        self.sp.transfer_playback(best["id"], force_play=True)
+        self._dev_cache = (time.monotonic(), best["id"])
+        return f"Playing on {best['name']}"
+
+    def duck(self):
+        """Quiet the music while the user speaks a command (speaker setups
+        drown the mic otherwise). Remembers the level for unduck()."""
+        try:
+            pb = self.sp.current_playback()
+            vol = pb["device"]["volume_percent"] if pb and pb.get("device") else None
+            if vol is not None and vol >= 30 and pb["device"]["id"]:
+                self._ducked = (vol, pb["device"]["id"])
+                self.sp.volume(15, device_id=pb["device"]["id"])
+        except Exception:
+            pass
+
+    def unduck(self):
+        ducked = getattr(self, "_ducked", None)
+        self._ducked = None
+        if ducked:
+            try:
+                self.sp.volume(ducked[0], device_id=ducked[1])
+            except Exception:
+                pass
+
     def _artist_tracks(self, query):
         """When the query names an artist ('x by green day'), that artist's
         popular tracks rescue a garbled title STT couldn't spell. (The
@@ -194,6 +284,7 @@ class Player:
             score(q, i["name"], (), i.get("popularity", 0)) for q in _queries(query)))
 
     def _play_context(self, name, kind):
+        self._snapshot()
         dev = self._device()
         if not dev:
             return NO_DEVICE
@@ -211,6 +302,7 @@ class Player:
 
     # -- commands ---------------------------------------------------------
     def play_track(self, query):
+        self._snapshot()
         dev = self._device()
         if not dev:
             return NO_DEVICE
@@ -252,6 +344,7 @@ class Player:
         """Your own playlists first (public search can't see private ones),
         then public search. 'Liked songs' feels like a playlist to users but
         isn't one to Spotify - route it."""
+        self._snapshot()
         names = _queries(name)
         if any(_sim(_norm(n), "liked songs") >= 0.7 for n in names):
             return self.play_liked()
@@ -276,6 +369,7 @@ class Player:
         return res
 
     def play_liked(self):
+        self._snapshot()
         dev = self._device()
         if not dev:
             return NO_DEVICE
