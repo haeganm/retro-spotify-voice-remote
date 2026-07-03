@@ -17,14 +17,21 @@ def normalize(text):
 
 def _register_cuda_dlls():
     """The nvidia-* pip wheels ship cuBLAS/cuDNN; ctranslate2 finds them only
-    if their bin dirs are registered."""
-    site = Path(sys.executable).parent / "Lib" / "site-packages"
+    if their bin dirs are registered. Locate the wheels via the import system
+    so this works in venvs and user installs, not just one layout."""
+    if sys.platform != "win32":
+        return True  # Linux wheels are found via the normal loader path
+    import importlib.util
+    spec = importlib.util.find_spec("nvidia")
+    if not spec or not spec.submodule_search_locations:
+        return False
     found = False
-    for sub in ("nvidia/cublas/bin", "nvidia/cudnn/bin"):
-        d = site / sub
-        if d.exists():
-            os.add_dll_directory(str(d))
-            found = True
+    for root in spec.submodule_search_locations:
+        for sub in ("cublas", "cudnn"):
+            d = Path(root) / sub / "bin"
+            if d.exists():
+                os.add_dll_directory(str(d))
+                found = True
     return found
 
 
