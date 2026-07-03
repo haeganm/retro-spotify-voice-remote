@@ -179,6 +179,12 @@ def make_logger(d):
 
 
 def main():
+    if sys.platform == "win32":
+        # own app identity: otherwise Windows matches ANY pythonw window to
+        # our shortcuts and paints the Retro icon on unrelated Python apps
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SpotifyRetro.App")
+
     ap = argparse.ArgumentParser(prog="spotify-retro")
     ap.add_argument("--say", help="run one command as text (no mic) and exit, e.g. --say 'play daft punk'")
     ap.add_argument("--debug", action="store_true", help="print everything the recognizer hears")
