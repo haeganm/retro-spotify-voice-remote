@@ -83,7 +83,7 @@ def _set_default(dev_id):
         pc.SetDefaultEndpoint(dev_id, role)
 
 
-def route_output_to_headset(family, wait_s=8):
+def route_output_to_headset(family, wait_s=8, marker=None):
     """Point the default output at `family`'s phone-quality 'Headset' render
     endpoint so audio keeps playing while its mic is engaged. The endpoint
     only materializes once the mic opens, so poll briefly. Returns the
@@ -101,6 +101,11 @@ def route_output_to_headset(family, wait_s=8):
                     current = _default_render_id()
                     if current != dev_id:
                         _prev_default = _prev_default or current
+                        if marker is not None:  # survives a crash: see restore_output
+                            try:
+                                marker.write_text(_prev_default, encoding="utf-8")
+                            except Exception:
+                                pass
                         _set_default(dev_id)
                     return name
             time.sleep(1)
@@ -109,13 +114,25 @@ def route_output_to_headset(family, wait_s=8):
     return None
 
 
-def restore_output():
-    """Put the default output back to what it was before we touched it."""
+def restore_output(marker=None):
+    """Put the default output back to what it was before we touched it. The
+    marker file covers the crash case - if the app died while routed, the next
+    start finds the marker and undoes the switch."""
     global _prev_default
-    if _prev_default is None:
-        return
-    try:
-        _set_default(_prev_default)
-    except Exception:
-        pass
+    prev = _prev_default
+    if prev is None and marker is not None:
+        try:
+            prev = marker.read_text(encoding="utf-8").strip() or None
+        except Exception:
+            prev = None
+    if prev is not None:
+        try:
+            _set_default(prev)
+        except Exception:
+            pass
     _prev_default = None
+    if marker is not None:
+        try:
+            marker.unlink(missing_ok=True)
+        except Exception:
+            pass

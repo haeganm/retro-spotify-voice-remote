@@ -377,11 +377,13 @@ def main():
     def toggle(icon_, item):
         listening.clear() if listening.is_set() else listening.set()
 
+    out_marker = d / "output.restore"  # crash-safe undo for the routing below
+
     def route_headset_output(family):
         """Bluetooth mics kill the hi-fi output; keep sound flowing by moving
         the system default output to the headset-quality endpoint (and back)."""
         def work():
-            name = winaudio.route_output_to_headset(family)
+            name = winaudio.route_output_to_headset(family, marker=out_marker)
             if name:
                 log(f"audio: default output -> {name!r}")
                 notify(f"Audio continues via {name} (phone quality while mic is on)")
@@ -392,7 +394,7 @@ def main():
             cfg["input_device"] = family  # family name: we probe its endpoints
             save_config(d, cfg)
             switches[0] = 0
-            winaudio.restore_output()  # leaving a previous Bluetooth selection
+            winaudio.restore_output(out_marker)  # leaving a previous Bluetooth selection
             idx, name = pick_input(family)
             log(f"mic: user picked {family!r} -> {name!r} (index {idx})")
             listener.device = idx
@@ -426,7 +428,7 @@ def main():
         notify("Token cleared - restart Spotify Retro to sign in again.")
 
     def quit_(icon_, item):
-        winaudio.restore_output()  # never leave the system on the phone-quality output
+        winaudio.restore_output(out_marker)  # never leave the system on the phone-quality output
         stop.set()
         icon.stop()
 
@@ -474,6 +476,8 @@ def main():
     threading.Thread(target=load_whisper, daemon=True).start()
     if cfg["input_device"] and bt_mic:  # resumed on a Bluetooth mic: keep audio flowing
         route_headset_output(cfg["input_device"])
+    elif (d / "output.restore").exists():  # app died while routed: undo the switch
+        winaudio.restore_output(d / "output.restore")
 
     print(f'Running in the tray. Say "{cfg["wake_phrase"]}" then a command, '
           f'or "{cfg["wake_phrase"]}, play <song>" in one breath.')
