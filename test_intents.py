@@ -1,4 +1,9 @@
 """Smallest check that fails if the intent parser breaks: python test_intents.py"""
+import time
+
+import spotipy
+
+import retro.voice as voice_mod
 from retro.player import NO_DEVICE, Player, _pl_score, query_variants, score
 from retro.voice import Listener, parse, strip_wake, words_to_int
 
@@ -76,6 +81,7 @@ assert strip_wake("hey retro", "hey retro") == ""
 assert strip_wake("play thriller", "hey retro") is None
 assert strip_wake("a retro pause", "hey retro") == "pause"       # STT mangles "hey"
 assert strip_wake("hey metro next song", "hey retro") == "next song"  # fuzzy wake word
+assert strip_wake("metra pause", "hey retro") == "pause"         # botched first consonant
 assert strip_wake("random chatter here", "hey retro") is None
 assert parse("place stand by me") == ("play_track", "stand by me")  # "play s..." -> "place s..."
 
@@ -91,7 +97,19 @@ lis.feed_text("random chatter", now=300)     # no wake -> ignored
 lis.feed_text("hey retro", now=400)
 lis.feed_text("the", now=401)                # noise must NOT eat the window...
 lis.feed_text("skip", now=403)               # ...so the real command still lands
-assert heard == ["play thriller", "<wake>", "pause", "<wake>", "<wake>", "skip"], heard
+lis.feed_text("hey retro", now=500)
+lis.feed_text("hey retro", now=502)          # repeated wake re-arms the window
+lis.feed_text("pause", now=507)              # (original window would've expired at 506)
+assert heard == ["play thriller", "<wake>", "pause", "<wake>", "<wake>", "skip",
+                 "<wake>", "<wake>", "pause"], heard
+
+# window junk must not be promoted to "play ..." ("no" -> NOKIA incident)
+heard.clear()
+lis.feed_text("hey retro", now=600)
+lis.feed_text("no", now=601)                 # 1 word: dispatched raw, not "play no"
+lis.feed_text("hey retro", now=610)
+lis.feed_text("money to work", now=611)      # plausible: promoted to "play ..."
+assert heard == ["<wake>", "no", "<wake>", "play money to work"], heard
 
 # Whisper routing: search commands (free text) go through the transcriber;
 # control commands take the Vosk fast path and must NEVER touch Whisper.
@@ -137,6 +155,21 @@ assert list(query_variants("stand by me by ben e king")) == [
     "track:stand artist:me by ben e king",
     "track:stand by me artist:ben e king",
 ]
+
+# Watchdog: a stuck decode must not block commands (falls back to Vosk text),
+# and a busy decoder means the next command skips Whisper entirely.
+voice_mod.WHISPER_TIMEOUT = 0.2
+heard3 = []
+lis3 = Listener("unused", "hey retro", on_command=heard3.append)
+lis3.transcriber = lambda a: (time.sleep(1.5), "too late")[1]
+t0 = time.time()
+lis3.feed_text("hey retro play thriller", now=1, audio=b"pcm")
+took = time.time() - t0
+assert heard3 == ["play thriller"] and took < 1.0, (heard3, took)
+lis3.feed_text("hey retro play daft punk", now=2, audio=b"pcm")  # decoder busy -> skip
+assert heard3[-1] == "play daft punk"
+time.sleep(1.6)  # let the stuck decode drain so the pool is clean for later tests
+voice_mod.WHISPER_TIMEOUT = 2.5
 
 # Player logic with a stubbed Spotify client (no network).
 
@@ -190,6 +223,12 @@ class FakeSp:
     def start_playback(self, device_id=None, uris=None, context_uri=None, **kw):
         self.played = uris if uris else context_uri
         self.play_kw = kw
+
+    def previous_track(self, device_id=None):
+        raise spotipy.SpotifyException(404, -1, "Player command failed: Restriction violated")
+
+    def seek_track(self, pos, device_id=None):
+        self.seeked = pos
 
 
 def fake_player(**kw):
@@ -284,6 +323,11 @@ p.commit_volume()
 assert p._ducked is None and p._duck_timer is None
 p.unduck()
 assert p.sp.vol == 15  # nothing restored: user's volume choice stands
+
+# "previous" on the first track: Spotify raises Restriction violated -> restart it
+p = fake_player()
+assert p.handle("previous_track") == "Restarted track"
+assert p.sp.seeked == 0
 
 assert fake_player().handle("play_track", "anything") == "No results for 'anything'"
 assert fake_player(device=False).handle("play_track", "x") == NO_DEVICE

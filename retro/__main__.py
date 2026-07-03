@@ -9,7 +9,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from . import stt, voice
+from . import osd, stt, voice
 from .player import Player
 
 MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/models
@@ -22,7 +22,7 @@ MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/mode
 DEFAULTS = {"wake_phrase": "hey retro", "model": "small",
             "input_device": None, "sound": True,
             "stt": "whisper", "whisper_model": "auto", "device": "auto",
-            "notify": "smart", "duck": True}
+            "notify": "smart", "duck": True, "osd": True}
 ICON = Path(__file__).parent / "assets" / "icon.png"
 ICON_ICO = Path(__file__).parent / "assets" / "icon.ico"
 
@@ -222,9 +222,13 @@ def main():
     stop = threading.Event()
 
     icon = pystray.Icon("SpotifyRetro", make_image(), "Spotify Retro")
+    show_osd = osd.make_osd() if cfg["osd"] else None
 
     def notify(msg):
         print(msg)
+        if show_osd:  # instant overlay; toasts queue up and arrive late
+            show_osd(msg)
+            return
         try:
             icon.notify(msg, "Spotify Retro")
         except Exception:

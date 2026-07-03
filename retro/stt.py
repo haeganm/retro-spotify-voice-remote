@@ -70,6 +70,10 @@ def make_transcriber(model_name="auto", hotwords=None, device="auto"):
         audio = np.concatenate([pad, audio, pad])
         segments, _ = model.transcribe(audio, language="en", beam_size=5,
                                        hotwords=hotwords)
-        return normalize(" ".join(s.text for s in segments))
+        # noise makes Whisper echo the hotword bias ("kanye west bangers...");
+        # these per-segment stats exist exactly to catch that
+        keep = [s.text for s in segments
+                if s.no_speech_prob <= 0.6 and s.avg_logprob >= -1.0]
+        return normalize(" ".join(keep))
 
     return transcribe, used

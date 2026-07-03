@@ -420,7 +420,13 @@ class Player:
         dev = self._device()
         if not dev:
             return NO_DEVICE
-        self.sp.previous_track(device_id=dev)
+        try:
+            self.sp.previous_track(device_id=dev)
+        except spotipy.SpotifyException as e:
+            if "Restriction violated" in (getattr(e, "msg", None) or str(e)):
+                self.sp.seek_track(0, device_id=dev)  # first track: restart it
+                return "Restarted track"
+            raise
         return "Previous track"
 
     def set_volume(self, n):

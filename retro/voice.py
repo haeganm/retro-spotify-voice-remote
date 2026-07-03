@@ -4,6 +4,13 @@ import json
 import queue
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
+
+# One decode at a time on its own thread: the log showed CUDA occasionally
+# stalling 15-25s, which must never block the mic loop.
+_DECODER = ThreadPoolExecutor(max_workers=1)
+WHISPER_TIMEOUT = 2.5  # seconds before we give up and use Vosk's text
 
 # Vosk emits numbers as words ("forty five"), so a tiny words->int map.
 _UNITS = {w: i for i, w in enumerate(
@@ -148,7 +155,13 @@ def strip_wake(text, wake):
     word = wake.split()[-1]
     tokens = text.split()
     for i in (0, 1):
-        if len(tokens) > i and difflib.SequenceMatcher(None, tokens[i], word).ratio() >= 0.75:
+        if len(tokens) <= i:
+            break
+        tok = tokens[i]
+        # fuzzy match, or same middle chars ('metra'/'metro' for 'retro' -
+        # STT reliably keeps the vowel-r core and botches the first consonant)
+        if (difflib.SequenceMatcher(None, tok, word).ratio() >= 0.75
+                or (len(tok) >= 4 and len(word) >= 4 and tok[1:4] == word[1:4])):
             return " ".join(tokens[i + 1:])
     return None
 
@@ -170,6 +183,7 @@ class Listener:
         self.log = lambda line: None  # set by the app to append to retro.log
         self.restart = None  # threading.Event set by the tray to reopen the mic
         self._awaiting_until = 0.0
+        self._decode_busy = False
 
     def _wake_cut(self, words, utt_start_sample):
         """Byte offset just past the wake keyword, from Vosk word timings -
@@ -194,13 +208,27 @@ class Listener:
             return fallback
         if not self.transcriber or audio is None:
             return fallback
+        if self._decode_busy:
+            self.log("whisper: skipped (previous decode still stuck)")
+            return fallback
+        self._decode_busy = True
+        t0 = time.time()
+        fut = _DECODER.submit(self.transcriber, audio)
         try:
-            w = self.transcriber(audio)
+            w = fut.result(timeout=WHISPER_TIMEOUT)
+            self._decode_busy = False
+        except FutureTimeout:
+            self.log(f"whisper: TIMEOUT >{WHISPER_TIMEOUT}s, using vosk text")
+            # release the flag (and swallow any exception) whenever it finishes
+            fut.add_done_callback(
+                lambda f: (setattr(self, "_decode_busy", False), f.exception()))
+            return fallback
         except Exception:
+            self._decode_busy = False
             return fallback
         if self.debug and w:
             print(f"[whisper] {w}")
-        self.log(f"whisper: {w!r}")
+        self.log(f"whisper: {w!r} ({(time.time() - t0) * 1000:.0f}ms)")
         if not w:
             return fallback
         rest = strip_wake(w, self.wake)  # audio may or may not include the wake
@@ -227,11 +255,21 @@ class Listener:
         if now < self._awaiting_until:
             if not defill(text):
                 return  # pure noise ("the") must not eat the command window
+            rest = strip_wake(text, self.wake)
+            if rest == "":  # they repeated the wake because we didn't respond
+                self._awaiting_until = now + 6
+                self.on_wake()
+                return
             self._awaiting_until = 0.0
-            cmd = self._better(text, audio, awaiting=True)
+            if rest:  # wake + command inside the window, in one breath
+                cmd = self._better(rest, audio, awaiting=False)
+            else:
+                cmd = self._better(text, audio, awaiting=True)
             # a window utterance IS a command; if the verb got eaten
-            # ("7 0 kanye west bangers"), assume "play"
-            if parse(cmd) is None and parse(f"play {cmd}"):
+            # ("7 0 kanye west bangers"), assume "play" - but only for
+            # plausible titles, never junk like "no" or "s"
+            if (parse(cmd) is None and len(cmd.split()) >= 2
+                    and strip_wake(cmd, self.wake) is None and parse(f"play {cmd}")):
                 cmd = f"play {cmd}"
             self.on_command(cmd)
             return
@@ -287,13 +325,12 @@ class Listener:
                 while not (stop.is_set() or self.restart.is_set()):
                     # laptop GPUs sleep when idle and take seconds (log showed
                     # 14-24s stalls) to wake a cold CUDA context: a tiny decode
-                    # every minute keeps it hot
-                    if self.transcriber and time.time() - warm > 60:
+                    # every minute keeps it hot (on the decoder thread, so it
+                    # can never block the mic or collide with a real decode)
+                    if self.transcriber and not self._decode_busy and time.time() - warm > 60:
                         warm = time.time()
-                        try:
-                            self.transcriber(b"\x00" * 6400)
-                        except Exception:
-                            pass
+                        _DECODER.submit(self.transcriber, b"\x00" * 6400) \
+                            .add_done_callback(lambda f: f.exception())
                     try:
                         data = q.get(timeout=0.5)
                     except queue.Empty:
