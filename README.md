@@ -17,8 +17,9 @@ api.spotify.com**. The only network traffic is the Spotify API itself.
 Speech is a two-stage hybrid, all offline: [Vosk](https://alphacephei.com/vosk/)
 streams the mic and spots the wake phrase instantly; the command utterance is
 then re-transcribed by [Whisper](https://github.com/SYSTRAN/faster-whisper)
-(base.en, CPU int8, ~0.5s), which is far better at song titles and artist
-names. Whichever transcription parses as a valid command wins.
+(GPU when available, ~0.15s; CPU otherwise, ~0.6s), which is far better at
+song titles and artist names. Whichever transcription parses as a valid
+command wins.
 
 It also learns you: your top Spotify artists become Whisper *hotwords* (so
 "Yeat" decodes as Yeat, not "beat") and get a ranking boost in search — an
@@ -31,30 +32,45 @@ by tv girl" finds TV Girl, not whatever is popular this week).
 
 ## Requirements
 
+- Windows 10/11 (this app is Windows-only)
 - Spotify **Premium** (the playback-control API requires it)
-- Python 3.10+
+- Python 3.10–3.12 (`winget install Python.Python.3.12` if you don't have it)
 - A microphone
 - Spotify open on at least one device (the API commands a device; it doesn't produce audio)
+- An NVIDIA GPU is optional — the installer detects one and enables faster,
+  more accurate recognition automatically
 
-## Setup (5 minutes, $0)
+## Install (one command, $0)
+
+```powershell
+git clone https://github.com/YOURNAME/spotify-retro
+cd spotify-retro
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+The installer creates an isolated environment, installs the tested dependency
+set (`requirements.lock`), enables GPU acceleration if you have an NVIDIA
+card, and puts a **Spotify Retro** icon on your desktop.
+
+Then the one-time human part (5 minutes):
 
 1. Create a free app at <https://developer.spotify.com/dashboard>
-   - Redirect URI: `http://127.0.0.1:8888/callback`
+   - Redirect URI (exactly): `http://127.0.0.1:8888/callback`
    - API: Web API
-2. Install and run:
+2. Double-click the desktop icon, paste your app's **Client ID** into the
+   dialog, and approve the browser sign-in once (PKCE — no client secret
+   involved). The speech models (~120 MB) download on first run.
 
-   ```sh
-   git clone https://github.com/YOURNAME/spotify-retro
-   cd spotify-retro
-   pip install .
-   spotify-retro
-   ```
+After that it just runs. Tray menu → **Start with Windows** makes it launch
+silently at login.
 
-3. First run: paste your app's **Client ID**, approve the browser sign-in once
-   (PKCE — no client secret involved), and let it download the speech models
-   (~40 MB Vosk + ~75 MB Whisper). After that it just runs.
+<details><summary>Developer install (no installer)</summary>
 
-Tray menu → **Start with Windows** makes it launch silently at login.
+```sh
+pip install .        # or pip install -e . for hacking
+spotify-retro        # console entry point
+```
+</details>
 
 ## Commands
 
@@ -90,7 +106,7 @@ engine; only title-carrying commands (play/queue/...) take the ~0.6s Whisper pas
 
 ## Config
 
-`%APPDATA%\SpotifyRetro\config.json` (Windows) or `~/.config/SpotifyRetro/config.json`:
+`%APPDATA%\SpotifyRetro\config.json`:
 
 ```json
 {
@@ -140,12 +156,20 @@ python e2e_voice.py      # synthesized speech through the real model (Windows)
 - A transcript of recognized speech is kept locally in `retro.log` (last ~500
   lines) for debugging. Delete it anytime.
 
-## Cross-platform
+## Troubleshooting
 
-Vosk, sounddevice, spotipy, and pystray all support Windows/macOS/Linux.
-The Startup shortcut and TTS-based e2e test are Windows-only. Built and
-tested on Windows 11.
+| Symptom | Do this |
+|---|---|
+| It never hears the wake word | `spotify-retro --mic-test` — speak while it runs; pick the mic with the biggest bar (tray → Microphone), or leave it on Automatic |
+| It mishears commands | `spotify-retro --misses` lists everything it failed to parse; `%APPDATA%\SpotifyRetro\retro.log` shows exactly what each engine heard |
+| "No Spotify device found" | Open Spotify on any device — this is a remote, not a player |
+| Music goes quiet/mono on a Bluetooth headset mic | Windows can't do hi-fi audio + headset mic at once; the app keeps sound flowing on the headset channel and restores hi-fi when you switch mics. Use Automatic (a wired/built-in mic) for full quality |
+| Commands need Premium | The Spotify playback API rejects free accounts |
+
+Uninstall: delete the repo folder, `%APPDATA%\SpotifyRetro`, and the desktop
+shortcut (plus tray → "Start with Windows" off, or delete the Startup shortcut).
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Speech models: Vosk (Apache-2.0),
+faster-whisper/Whisper (MIT).

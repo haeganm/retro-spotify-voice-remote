@@ -165,21 +165,14 @@ def pick_input(pref=None, exclude=()):
         if scored:
             _, i, n = max(scored)  # loudest, or best openable if all gated-quiet
             return i, n
-
-    def is_bt(name):  # engaging these degrades the user's audio - never auto-pick
-        low = name.lower()
-        return "hands-free" in low or "bthhfenum" in low or low.startswith("headset")
-
-    wired = [(i, n) for i, n in devs if not is_bt(n)]
-    for pool in (wired, devs):
-        scored = [(rms, i, n) for i, n in pool if (rms := _probe_mic(i)) >= 0]
-        live = [s for s in scored if s[0] >= 25]
-        if live:
-            _, i, n = max(live)
-            return i, n
-        if pool is devs and scored:
-            _, i, n = max(scored)
-            return i, n
+    scored = [(rms, i, n) for i, n in devs if (rms := _probe_mic(i)) >= 0]
+    live = [s for s in scored if s[0] >= 25]
+    if live:
+        _, i, n = max(live)
+        return i, n
+    if scored:
+        _, i, n = max(scored)
+        return i, n
     return None, "system default"
 
 
