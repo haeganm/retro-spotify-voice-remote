@@ -114,7 +114,14 @@ def main():
 
     listener = voice.Listener(model, cfg["wake_phrase"], on_command,
                               on_wake=lambda: notify("Listening..."))
-    threading.Thread(target=listener.run, args=(listening, stop), daemon=True).start()
+
+    def run_listener():
+        try:
+            listener.run(listening, stop)
+        except Exception as e:  # e.g. no microphone: stay in tray but say why
+            notify(f"Voice listener stopped: {e}")
+
+    threading.Thread(target=run_listener, daemon=True).start()
 
     print(f'Running in the tray. Say "{cfg["wake_phrase"]}" then a command, '
           f'or "{cfg["wake_phrase"]}, play <song>" in one breath.')

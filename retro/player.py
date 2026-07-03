@@ -66,6 +66,8 @@ class Player:
         if not dev:
             return NO_DEVICE
         t = self._search(query, "track")
+        if not t and " by " in query:
+            t = self._search(query.replace(" by ", " "), "track")
         if not t:
             return f"No results for '{query}'"
         self.sp.start_playback(device_id=dev, uris=[t["uri"]])
@@ -120,10 +122,15 @@ class Player:
         i = pb["item"]
         return f"{i['name']} by {', '.join(a['name'] for a in i['artists'])}"
 
+    def _set_shuffle(self, state):
+        dev = self._device()
+        if not dev:
+            return NO_DEVICE
+        self.sp.shuffle(state, device_id=dev)
+        return f"Shuffle {'on' if state else 'off'}"
+
     def shuffle_on(self):
-        self.sp.shuffle(True, device_id=self._device())
-        return "Shuffle on"
+        return self._set_shuffle(True)
 
     def shuffle_off(self):
-        self.sp.shuffle(False, device_id=self._device())
-        return "Shuffle off"
+        return self._set_shuffle(False)

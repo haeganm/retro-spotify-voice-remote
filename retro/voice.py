@@ -14,6 +14,8 @@ _TENS = {w: (i + 2) * 10 for i, w in enumerate(
 
 def words_to_int(text):
     text = text.strip()
+    if not text:
+        return None
     if text.isdigit():
         return int(text)
     if text in ("one hundred", "a hundred", "hundred"):
@@ -35,21 +37,25 @@ def _i(pattern, action, arg=lambda m: None):
 
 # Order matters: exact phrases before greedy "play (.+)".
 INTENTS = [
-    _i(r"(?:pause|stop)(?: (?:the )?(?:music|song|playback))?", "pause"),
+    _i(r"(?:pause|stop)(?: (?:the )?(?:music|song|playback|playing))?", "pause"),
     _i(r"(?:resume|continue|keep playing|play)(?: (?:the )?(?:music|song))?", "resume"),
     _i(r"(?:next|skip)(?: (?:this |the )?(?:song|track))?|skip it", "next_track"),
     _i(r"(?:previous|go back|back|last)(?: (?:song|track))?", "previous_track"),
-    _i(r"(?:turn (?:the )?)?volume up|louder", "volume_up"),
-    _i(r"(?:turn (?:the )?)?volume down|quieter|softer", "volume_down"),
-    _i(r"(?:set (?:the )?)?volume(?: to)? (.+)", "set_volume", lambda m: words_to_int(m.group(1))),
-    _i(r"what(?:'s| is|s)(?: currently)? playing|what (?:song|track) is this|what is this(?: song)?", "now_playing"),
+    _i(r"(?:turn (?:the )?)?volume up|turn it up|louder", "volume_up"),
+    _i(r"(?:turn (?:the )?)?volume down|turn it down|quieter|softer", "volume_down"),
+    # "to" is often transcribed as its homophone "two" ("set volume two fifty"),
+    # so both are treated as the preposition; backtracking still allows "volume two" -> 2.
+    _i(r"(?:set (?:the )?)?volume(?: to| two)? (.+)", "set_volume", lambda m: words_to_int(m.group(1))),
+    # "what's" is often heard as "was"
+    _i(r"(?:what(?:'s| is|s)?|was)(?: currently)? playing|what (?:song|track) is this|what is this(?: song)?", "now_playing"),
     _i(r"(?:turn )?shuffle off", "shuffle_off"),
     _i(r"(?:turn )?shuffle(?: on)?", "shuffle_on"),
     _i(r"play (?:the )?artist (.+)", "play_artist", lambda m: m.group(1)),
     _i(r"play (?:some|songs by|music by) (.+)", "play_artist", lambda m: m.group(1)),
     _i(r"play (?:the )?album (.+)", "play_album", lambda m: m.group(1)),
     _i(r"play (?:the |my )?playlist (.+)", "play_playlist", lambda m: m.group(1)),
-    _i(r"play (.+?) by (.+)", "play_track", lambda m: f"{m.group(1)} {m.group(2)}"),
+    # "play X by Y" goes to Spotify search as-is: splitting on "by" would break
+    # titles like "stand by me"; player retries without "by" if search misses.
     _i(r"play (.+)", "play_track", lambda m: m.group(1)),
 ]
 
@@ -88,6 +94,22 @@ class Listener:
         self.wake = wake_phrase.lower()
         self.on_command = on_command
         self.on_wake = on_wake
+        self._awaiting_until = 0.0
+
+    def feed_text(self, text, now=None):
+        """Route one recognized utterance: command after wake (same breath or
+        within 6s of the bare wake phrase)."""
+        now = time.time() if now is None else now
+        if now < self._awaiting_until:
+            self._awaiting_until = 0.0
+            self.on_command(text)
+            return
+        rest = strip_wake(text, self.wake)
+        if rest:
+            self.on_command(rest)
+        elif rest == "":  # wake phrase alone: next utterance is the command
+            self._awaiting_until = now + 6
+            self.on_wake()
 
     def run(self, listening, stop):
         import sounddevice as sd
@@ -100,7 +122,6 @@ class Listener:
         def cb(indata, frames, t, status):
             q.put(bytes(indata))
 
-        awaiting_until = 0.0
         with sd.RawInputStream(samplerate=16000, blocksize=8000,
                                dtype="int16", channels=1, callback=cb):
             while not stop.is_set():
@@ -113,15 +134,5 @@ class Listener:
                 if not rec.AcceptWaveform(data):
                     continue
                 text = json.loads(rec.Result()).get("text", "").strip()
-                if not text:
-                    continue
-                if time.time() < awaiting_until:
-                    awaiting_until = 0.0
-                    self.on_command(text)
-                    continue
-                rest = strip_wake(text, self.wake)
-                if rest:
-                    self.on_command(rest)
-                elif rest == "":  # wake phrase alone: next utterance is the command
-                    awaiting_until = time.time() + 6
-                    self.on_wake()
+                if text:
+                    self.feed_text(text)
