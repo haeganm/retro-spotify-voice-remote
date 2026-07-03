@@ -150,32 +150,34 @@ def _probe_mic(index, seconds=0.5):
     return float(np.sqrt(np.mean(rec.astype(np.float64) ** 2)))
 
 
+def is_bt_mic(name):
+    """Bluetooth hands-free endpoints: merely OPENING one (even to probe it)
+    flips the headset out of hi-fi audio."""
+    low = name.lower()
+    return "hands-free" in low or "bthhfenum" in low or low.startswith("headset")
+
+
 def pick_input(pref=None, exclude=()):
     """Choose the input endpoint that actually delivers audio. Names lie;
     RMS doesn't - but gated mics (Bluetooth headsets suppress their noise
     floor) probe silent while being perfectly fine, so a user-chosen family
-    always wins with its best OPENABLE endpoint, quiet or not."""
+    always wins with its best OPENABLE endpoint, quiet or not. Automatic mode
+    never even probes Bluetooth endpoints: it would never pick them, and
+    probing alone disrupts the user's audio."""
     devs = [(i, n) for i, n in input_devices() if i not in exclude]
     if isinstance(pref, int):  # legacy index configs
         match = [n for i, n in devs if i == pref]
         pref = mic_family(match[0]) if match else None
-    fam = [(i, n) for i, n in devs if pref and pref.lower() in n.lower()]
-    if fam:
+    if pref:
+        fam = [(i, n) for i, n in devs if pref.lower() in n.lower()]
         scored = [(rms, i, n) for i, n in fam if (rms := _probe_mic(i)) >= 0]
         if scored:
             _, i, n = max(scored)  # loudest, or best openable if all gated-quiet
             return i, n
-
-    def is_bt(name):  # engaging these degrades the user's audio
-        low = name.lower()
-        return "hands-free" in low or "bthhfenum" in low or low.startswith("headset")
-
-    scored = [(rms, i, n) for i, n in devs if (rms := _probe_mic(i)) >= 0]
+    wired = [(i, n) for i, n in devs if not is_bt_mic(n)]
+    scored = [(rms, i, n) for i, n in wired if (rms := _probe_mic(i)) >= 0]
     if scored:
-        # non-Bluetooth beats Bluetooth even when quiet (a silent room is
-        # fine; hijacking the user's headset audio is not), then alive > not,
-        # then loudest
-        rms, i, n = max(scored, key=lambda s: (not is_bt(s[2]), s[0] >= 25, s[0]))
+        _, i, n = max(scored, key=lambda s: (s[0] >= 25, s[0]))
         return i, n
     return None, "system default"
 
@@ -343,7 +345,7 @@ def main():
     mic_index, mic_name = pick_input(cfg["input_device"])
     print(f"Microphone: {mic_name}")
     log(f"mic: {mic_name!r} (index {mic_index})")
-    bt_mic = any(k in mic_name.lower() for k in ("headset", "hands-free", "bthhfenum"))
+    bt_mic = is_bt_mic(mic_name)
 
     listener = voice.Listener(
         model, cfg["wake_phrase"], on_command,
@@ -395,8 +397,7 @@ def main():
             log(f"mic: user picked {family!r} -> {name!r} (index {idx})")
             listener.device = idx
             listener.restart.set()
-            if family and ("headset" in name.lower() or "hands-free" in name.lower()
-                           or "bthhfenum" in name.lower()):
+            if family and is_bt_mic(name):
                 route_headset_output(family)
         return do
 
@@ -407,9 +408,8 @@ def main():
         seen, bt = set(), set()
         for _, name in input_devices():
             fam = mic_family(name)
-            low = name.lower()
-            if "hands-free" in low or "bthhfenum" in low or low.startswith("headset"):
-                bt.add(fam)  # Bluetooth mic: using it silences A2DP music on Windows
+            if is_bt_mic(name):
+                bt.add(fam)  # Bluetooth mic: using it degrades headset audio
             seen.add(fam)
         for fam in sorted(seen):
             label = (f"{fam}  (Windows limitation: headset audio degrades while its mic is on)"
