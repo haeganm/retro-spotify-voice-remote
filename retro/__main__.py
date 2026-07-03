@@ -189,7 +189,24 @@ def main():
     ap.add_argument("--say", help="run one command as text (no mic) and exit, e.g. --say 'play daft punk'")
     ap.add_argument("--debug", action="store_true", help="print everything the recognizer hears")
     ap.add_argument("--misses", action="store_true", help="show recent unrecognized commands from the log")
+    ap.add_argument("--mic-test", action="store_true", help="show live input level per microphone (speak while it runs)")
     args = ap.parse_args()
+
+    if args.mic_test:
+        import numpy as np
+        import sounddevice as sd
+        print("Speak normally... measuring each mic for 2s:")
+        for i, name in input_devices():
+            try:
+                rec = sd.rec(int(2 * 16000), samplerate=16000, channels=1,
+                             dtype="int16", device=i)
+                sd.wait()
+                rms = float(np.sqrt(np.mean(rec.astype(np.float64) ** 2)))
+                bar = "#" * min(40, int(rms / 50))
+                print(f"{rms:7.0f} {bar:40} {name}")
+            except Exception as e:
+                print(f"   dead {'':40} {name} ({e})")
+        return
 
     d = app_dir()
     if args.misses:
