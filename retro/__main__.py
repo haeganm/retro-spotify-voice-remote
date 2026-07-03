@@ -151,18 +151,28 @@ def _probe_mic(index, seconds=0.5):
 
 
 def pick_input(pref=None, exclude=()):
-    """Choose the input endpoint that actually delivers audio. Preferred
-    family first (all its endpoints), then everything. Names lie; RMS doesn't."""
+    """Choose the input endpoint that actually delivers audio. Names lie;
+    RMS doesn't - but gated mics (Bluetooth headsets suppress their noise
+    floor) probe silent while being perfectly fine, so a user-chosen family
+    always wins with its best OPENABLE endpoint, quiet or not."""
     devs = [(i, n) for i, n in input_devices() if i not in exclude]
     if isinstance(pref, int):  # legacy index configs
         match = [n for i, n in devs if i == pref]
         pref = mic_family(match[0]) if match else None
     fam = [(i, n) for i, n in devs if pref and pref.lower() in n.lower()]
-    for pool in (fam, devs):
-        scored = [(rms, i, n) for i, n in pool if (rms := _probe_mic(i)) >= 25]
+    if fam:
+        scored = [(rms, i, n) for i, n in fam if (rms := _probe_mic(i)) >= 0]
         if scored:
-            _, i, n = max(scored)
+            _, i, n = max(scored)  # loudest, or best openable if all gated-quiet
             return i, n
+    scored = [(rms, i, n) for i, n in devs if (rms := _probe_mic(i)) >= 0]
+    live = [s for s in scored if s[0] >= 25]
+    if live:
+        _, i, n = max(live)
+        return i, n
+    if scored:
+        _, i, n = max(scored)
+        return i, n
     return None, "system default"
 
 
@@ -341,9 +351,11 @@ def main():
     switches = [0]
 
     def on_dead_mic():
-        """20s of dead air on the chosen endpoint: find one that's alive."""
-        if switches[0] >= 3:
-            return  # don't flap forever in a genuinely silent room
+        """Stream never produced audio: find an endpoint that's alive. Only in
+        Automatic mode - an explicitly chosen mic (e.g. a gated Bluetooth
+        headset that is silent until spoken into) is respected, always."""
+        if cfg["input_device"] is not None or switches[0] >= 3:
+            return
         switches[0] += 1
         exclude = (listener.device,) if isinstance(listener.device, int) else ()
         idx, name = pick_input(cfg["input_device"], exclude=exclude)
