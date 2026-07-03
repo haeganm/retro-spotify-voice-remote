@@ -62,10 +62,21 @@ INTENTS = [
 ]
 
 
-def parse(text):
-    """Return (action, arg) or None if the utterance isn't a known command."""
-    text = text.lower().strip()
-    text = re.sub(r"^place\b", "play", text)  # "play s..." often decodes as "place s..."
+# Noise/breath decodes as short junk words at utterance edges ("the skip the").
+_FILLERS = {"the", "a", "uh", "um", "and", "huh", "hey"}
+
+
+def defill(text):
+    """Strip filler tokens from the edges only - never from inside a title."""
+    words = text.split()
+    while words and words[0] in _FILLERS:
+        words.pop(0)
+    while words and words[-1] in _FILLERS:
+        words.pop()
+    return " ".join(words)
+
+
+def _match(text):
     for pat, action, argf in INTENTS:
         m = pat.fullmatch(text)
         if m:
@@ -74,6 +85,16 @@ def parse(text):
                 continue  # "volume banana" -> keep trying other patterns
             return (action, arg)
     return None
+
+
+def parse(text):
+    """Return (action, arg) or None if the utterance isn't a known command."""
+    text = text.lower().strip()
+    text = re.sub(r"^place\b", "play", text)  # "play s..." often decodes as "place s..."
+    intent = _match(text)
+    if intent is None and defill(text) != text:
+        intent = _match(defill(text))  # second chance without edge noise
+    return intent
 
 
 def strip_wake(text, wake):
@@ -113,6 +134,8 @@ class Listener:
         within 6s of the bare wake phrase)."""
         now = time.time() if now is None else now
         if now < self._awaiting_until:
+            if not defill(text):
+                return  # pure noise ("the") must not eat the command window
             self._awaiting_until = 0.0
             self.on_command(text)
             return
@@ -139,7 +162,8 @@ class Listener:
             try:
                 # trailing-silence window before an utterance finalizes:
                 # (max unfinished, silence after speech, max utterance length)
-                rec.SetEndpointerDelays(1.6, 0.35, 12.0)
+                # 0.5s: snappy but doesn't split words on natural pauses
+                rec.SetEndpointerDelays(1.6, 0.5, 12.0)
             except AttributeError:
                 pass  # older vosk: default endpointing
             q = queue.Queue()

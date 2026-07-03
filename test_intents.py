@@ -36,6 +36,10 @@ CASES = {
     "turn shuffle off": ("shuffle_off", None),
     "play my liked songs": ("play_liked", None),
     "play favorites": ("play_liked", None),
+    # noise decodes as filler words at the edges - stripped on second pass
+    "the skip the": ("next_track", None),
+    "uh play the less i know the better": ("play_track", "the less i know the better"),
+    "the the pause": ("pause", None),
 }
 
 for text, want in CASES.items():
@@ -63,7 +67,10 @@ lis.feed_text("pause", now=112)              # within window -> command
 lis.feed_text("hey retro", now=200)
 lis.feed_text("next song", now=210)          # window expired -> ignored
 lis.feed_text("random chatter", now=300)     # no wake -> ignored
-assert heard == ["play thriller", "<wake>", "pause", "<wake>"], heard
+lis.feed_text("hey retro", now=400)
+lis.feed_text("the", now=401)                # noise must NOT eat the window...
+lis.feed_text("skip", now=403)               # ...so the real command still lands
+assert heard == ["play thriller", "<wake>", "pause", "<wake>", "<wake>", "skip"], heard
 
 # Search scoring: exact-but-obscure must beat popular-but-partial.
 from retro.player import NO_DEVICE, Player, query_variants, score

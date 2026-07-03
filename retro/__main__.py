@@ -75,10 +75,15 @@ def make_image():
     return img
 
 
+CHIME = Path(__file__).parent / "assets" / "wake.wav"
+
+
 def beep():
+    """Soft async chime - quiet enough that the mic barely picks it up."""
     if sys.platform == "win32":
         import winsound
-        winsound.Beep(880, 90)
+        winsound.PlaySound(str(CHIME), winsound.SND_FILENAME | winsound.SND_ASYNC
+                           | winsound.SND_NODEFAULT)
 
 
 def input_devices():
