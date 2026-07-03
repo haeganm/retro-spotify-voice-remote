@@ -157,7 +157,7 @@ corner overlay and tray-icon tooltip show exactly what it did.
 - Control words ("skip", "pause") respond instantly; song searches take a
   moment (speech transcription + Spotify search).
 - If it keeps mishearing a phrase, run `retro --misses` to see what it
-  actually heard — the transcript log (`%APPDATA%\Retroetro.log`) shows
+  actually heard — the transcript log (`%APPDATA%\Retro\retro.log`) shows
   both recognition engines' hearings for every command.
 - Test any command without speaking: `retro --say "play daft punk"`.
 
