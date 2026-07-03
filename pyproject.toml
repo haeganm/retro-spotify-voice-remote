@@ -16,7 +16,6 @@ dependencies = [
     "pystray",
     "Pillow",
     "faster-whisper",
-    "pyttsx3",
 ]
 
 [project.optional-dependencies]

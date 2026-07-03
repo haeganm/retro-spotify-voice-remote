@@ -9,7 +9,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from . import speak, stt, voice
+from . import stt, voice
 from .player import Player
 
 MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/models
@@ -22,7 +22,7 @@ MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/mode
 DEFAULTS = {"wake_phrase": "hey retro", "model": "small",
             "input_device": None, "sound": True,
             "stt": "whisper", "whisper_model": "auto", "device": "auto",
-            "notify": "smart", "speak": True, "duck": True}
+            "notify": "smart", "duck": True}
 ICON = Path(__file__).parent / "assets" / "icon.png"
 ICON_ICO = Path(__file__).parent / "assets" / "icon.ico"
 
@@ -43,13 +43,32 @@ def save_config(d, cfg):
     (d / "config.json").write_text(json.dumps(cfg, indent=2))
 
 
+def ask_client_id():
+    """First-run Client ID prompt. Console when there is one; a tkinter dialog
+    when launched from a shortcut (pythonw has no stdin - input() would kill
+    the app silently on a fresh machine)."""
+    instructions = ("Create a free app at https://developer.spotify.com/dashboard\n"
+                    "with Redirect URI http://127.0.0.1:8888/callback")
+    if sys.stdin and sys.stdin.isatty():
+        print(f"First run - {instructions}")
+        return input("Paste your Client ID: ").strip()
+    import tkinter as tk
+    from tkinter import simpledialog
+    root = tk.Tk()
+    root.withdraw()
+    val = simpledialog.askstring("Spotify Retro - first run",
+                                 instructions + "\n\nPaste your Client ID:")
+    root.destroy()
+    return (val or "").strip()
+
+
 def load_config(d):
     f = d / "config.json"
     cfg = json.loads(f.read_text()) if f.exists() else {}
     if not cfg.get("client_id"):
-        print("First run - create a free app at https://developer.spotify.com/dashboard")
-        print("  (set its Redirect URI to http://127.0.0.1:8888/callback)")
-        cfg["client_id"] = input("Paste your Client ID: ").strip()
+        cfg["client_id"] = ask_client_id()
+        if not cfg["client_id"]:
+            sys.exit("No Client ID provided.")
     for k, v in DEFAULTS.items():
         cfg.setdefault(k, v)
     save_config(d, cfg)
@@ -65,6 +84,10 @@ def ensure_model(d, size):
     zpath = d / "model.zip"
     urllib.request.urlretrieve(f"https://alphacephei.com/vosk/models/{folder}.zip", zpath)
     with zipfile.ZipFile(zpath) as z:
+        # belt-and-braces zip-slip guard (extract() also sanitizes paths)
+        for n in z.namelist():
+            if ".." in Path(n).parts:
+                raise ValueError(f"unsafe path in model zip: {n}")
         z.extractall(d)
     zpath.unlink()
     return m
@@ -129,9 +152,13 @@ def set_startup(enable):
         return
     pythonw = Path(sys.executable).parent / "pythonw.exe"
     import subprocess
-    ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');"
-          f"$s.TargetPath='{pythonw}';$s.Arguments='-m retro';"
-          f"$s.IconLocation='{ICON_ICO}';$s.Save()")
+
+    def q(p):  # PowerShell single-quote escaping (usernames can contain ')
+        return str(p).replace("'", "''")
+
+    ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(lnk)}');"
+          f"$s.TargetPath='{q(pythonw)}';$s.Arguments='-m retro';"
+          f"$s.IconLocation='{q(ICON_ICO)}';$s.Save()")
     subprocess.run(["powershell", "-NoProfile", "-Command", ps],
                    check=True, creationflags=0x08000000)  # CREATE_NO_WINDOW
 
@@ -203,21 +230,13 @@ def main():
         except Exception:
             pass
 
-    # fixed control confirmations get a subtle pop; search results, answers
-    # and errors are spoken (or toasted when speech is off)
-    POP_OK = ("Paused", "Resuming", "Skipped", "Previous", "Volume", "Shuffle")
+    # successes get a subtle sound + tooltip update; toasts only carry news
+    # you must read (errors, "what's playing")
+    QUIET_OK = ("Playing", "Queued", "Back to", "Paused", "Resuming", "Skipped",
+                "Previous", "Volume", "Shuffle")
     VOLUME_ACTIONS = {"set_volume", "volume_up", "volume_down"}
 
     log = make_logger(d)
-    say = speak.make_speaker() if cfg["speak"] else None
-
-    def announce(msg):
-        print(msg)
-        icon.title = f"Spotify Retro - {msg}"[:120]
-        if say:
-            say(msg)
-        else:
-            notify(msg)
 
     def on_command(text):
         def work():  # off the mic thread: API round trips must not deafen the app
@@ -225,9 +244,9 @@ def main():
             if not intent:
                 log(f"cmd: {text!r} -> no intent")
                 player.unduck()
-                if cfg["sound"] and not say:
+                if cfg["sound"]:
                     play_wav("err.wav")
-                announce(f"Didn't catch that: '{text}'")
+                notify(f"Didn't catch that: '{text}'")
                 return
             msg = player.handle(*intent)
             log(f"cmd: {text!r} -> {intent} -> {msg!r}")
@@ -236,13 +255,15 @@ def main():
             else:
                 player.unduck()
             if (cfg["notify"] == "smart" and intent[0] != "now_playing"
-                    and msg.startswith(POP_OK)):
+                    and msg.startswith(QUIET_OK)):
                 if cfg["sound"]:
                     play_wav("ok.wav")
                 print(msg)
-                icon.title = f"Spotify Retro - {msg}"[:120]
+                icon.title = f"Spotify Retro - {msg}"[:120]  # hover shows last action
             else:
-                announce(msg)
+                if cfg["sound"] and not msg.startswith(QUIET_OK) and intent[0] != "now_playing":
+                    play_wav("err.wav")
+                notify(msg)
         threading.Thread(target=work, daemon=True).start()
 
     def wake_hint():

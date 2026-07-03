@@ -181,32 +181,6 @@ class Player:
                                    position_ms=undo["pos"])
         return f"Back to {undo['name']}"
 
-    _DEVICE_TYPES = {"phone": "smartphone", "mobile": "smartphone",
-                     "computer": "computer", "laptop": "computer", "pc": "computer",
-                     "desktop": "computer", "speaker": "speaker", "tv": "tv"}
-
-    def transfer(self, name):
-        """Move playback to another Spotify Connect device by name or kind."""
-        name = _queries(name)[0]
-        devices = self.sp.devices()["devices"]
-        if not devices:
-            return "No Spotify devices found"
-        want_type = self._DEVICE_TYPES.get(_norm(name))
-
-        def dev_score(dv):
-            s = _sim(_norm(name), _norm(dv["name"]))
-            if want_type and dv.get("type", "").lower() == want_type:
-                s = max(s, 0.9)
-            return s
-
-        best = max(devices, key=dev_score)
-        if dev_score(best) < 0.5:
-            return f"No device like '{name}'. Available: " + \
-                ", ".join(d["name"] for d in devices[:4])
-        self.sp.transfer_playback(best["id"], force_play=True)
-        self._dev_cache = (time.monotonic(), best["id"])
-        return f"Playing on {best['name']}"
-
     def duck(self):
         """Quiet the music while the user speaks a command (speaker setups
         drown the mic otherwise). Remembers the level for unduck()."""

@@ -1,4 +1,5 @@
 """Smallest check that fails if the intent parser breaks: python test_intents.py"""
+from retro.player import NO_DEVICE, Player, _pl_score, query_variants, score
 from retro.voice import Listener, parse, strip_wake, words_to_int
 
 CASES = {
@@ -44,9 +45,6 @@ CASES = {
     "playlist light songs": ("play_playlist", "light songs"),
     "play the playlist called gym": ("play_playlist", "gym"),
     "playlist seven point o": ("play_playlist", "seven point o"),
-    "switch to my phone": ("transfer", "phone"),
-    "play it on the speaker": ("transfer", "speaker"),
-    "transfer to the computer": ("transfer", "computer"),
     "put it back": ("put_back", None),
     "go back to what was playing": ("put_back", None),
     "queue mr brightside": ("queue_track", "mr brightside"),
@@ -117,8 +115,6 @@ assert heard2 == ["play brain stew by green day", "pause", "the skip the",
                   "play money twerk by yeat|money toward my eat"], heard2
 
 # Search scoring: exact-but-obscure must beat popular-but-partial.
-from retro.player import NO_DEVICE, Player, query_variants, score
-
 tv_girl = score("cigarettes out the window", "Cigarettes out the Window", ["TV Girl"], 65)
 juice = score("cigarettes out the window", "Cigarettes", ["Juice WRLD"], 95)
 assert tv_girl > juice, (tv_girl, juice)
@@ -242,7 +238,6 @@ p = fake_player(playlists=["\U0001F525 GYM PUMP mix 2024 \U0001F525", "chill vib
 assert "GYM PUMP" in p.handle("play_playlist", "gym pump")
 
 # spoken numbers match versioned names ("seven point o" -> "7.0")
-from retro.player import _pl_score
 assert _pl_score("seven point o", "7.0 \U0001F3AF") >= 0.9
 assert _pl_score("seven point zero", "7.0 \U0001F3AF") >= 0.9
 p = fake_player(playlists=["7.0 \U0001F3AF", "boiii"])
@@ -260,14 +255,6 @@ assert msg.startswith("No playlist like") and "Closest:" in msg, msg
 p = fake_player(liked=["a", "b", "c"])
 assert p.handle("play_liked") == "Playing your liked songs"
 assert sorted(p.sp.played) == ["uri:a", "uri:b", "uri:c"]
-
-# transfer: fuzzy device by type synonym and by name
-p = fake_player(device_list=[{"id": "ph", "name": "Haegan's iPhone", "type": "Smartphone"},
-                             {"id": "pc", "name": "DESKTOP-AB12", "type": "Computer"}])
-assert p.handle("transfer", "phone") == "Playing on Haegan's iPhone"
-assert p.sp.transferred == "ph"
-assert p.handle("transfer", "desktop a b twelve|desktop ab 12") == "Playing on DESKTOP-AB12"
-assert "Available:" in p.handle("transfer", "toaster oven")
 
 # put it back: snapshot on play, restore with context + position
 p = fake_player(tracks={"thriller": [("Thriller", "MJ", 90)]})

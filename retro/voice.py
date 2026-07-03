@@ -65,8 +65,6 @@ INTENTS = [
     _i(r"play (?:the |my )?(.+) playlist", "play_playlist", lambda m: m.group(1)),
     # "liked" is heard as "like"/"light" constantly
     _i(r"play (?:my )?(?:(?:liked?|light|favou?rite|saved) (?:songs?|tracks?|music)|favou?rites?|likes)", "play_liked"),
-    _i(r"(?:switch|transfer|move|connect)(?: (?:playback|music|it|this))?(?: over)? to (?:the |my )?(.+)", "transfer", lambda m: m.group(1)),
-    _i(r"play (?:it |this |music )?on (?:the |my )?(.+)", "transfer", lambda m: m.group(1)),
     _i(r"put it back|go back to what was playing|play what was (?:playing |on )?before|undo(?: that)?", "put_back"),
     # "queue" decodes as its homophones constantly
     _i(r"(?:(?:queue|que|cue|q)(?: up)?|add) (.+?)(?: to (?:the |my )?(?:queue|que|cue|q))?", "queue_track", lambda m: m.group(1)),
@@ -134,7 +132,7 @@ def parse(text):
 # often drops the verb) onto the intent Vosk identified.
 NEEDS_WHISPER = {"play_track": "play", "queue_track": "queue",
                  "play_playlist": "play playlist", "play_album": "play the album",
-                 "play_artist": "play the artist", "transfer": "switch to"}
+                 "play_artist": "play the artist"}
 
 
 def strip_wake(text, wake):
