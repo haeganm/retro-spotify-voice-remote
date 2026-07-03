@@ -250,6 +250,10 @@ and learn from the source. Commercial use, redistribution, and derivative
 works require written permission — open an issue to ask (I'm reasonable).
 Copyright (C) 2026 Haegan McGarry.
 
+The license covers **everything in this repository** — code, docs, logo,
+banner, and audio assets alike; see [NOTICE](NOTICE) for the plain-language
+summary.
+
 Built on [Vosk](https://alphacephei.com/vosk/) (Apache-2.0),
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper) / OpenAI Whisper
 (MIT), and [spotipy](https://github.com/spotipy-dev/spotipy) (MIT).
