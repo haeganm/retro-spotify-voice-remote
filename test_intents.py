@@ -48,6 +48,11 @@ CASES = {
     "put it back": ("put_back", None),
     "go back to what was playing": ("put_back", None),
     "queue mr brightside": ("queue_track", "mr brightside"),
+    # log-observed mishearings of "play" and "queue"
+    "clay rock star by yeat": ("play_track", "rock star by yeat"),
+    "played daft punk": ("play_track", "daft punk"),
+    "you call my phone by lil mosey": ("queue_track", "call my phone by lil mosey"),
+    "do call my phone": ("queue_track", "call my phone"),
     "queue up bohemian rhapsody": ("queue_track", "bohemian rhapsody"),
     "add stand by me to the queue": ("queue_track", "stand by me"),
     "play thriller next": ("queue_track", "thriller"),
@@ -263,13 +268,22 @@ assert p.handle("put_back") == "Back to Old Song"
 assert p.sp.played == "ctx:oldplaylist" and p.sp.play_kw["position_ms"] == 1234
 assert fake_player().handle("put_back") == "Nothing to go back to"
 
-# duck/unduck bookkeeping
+# duck/unduck bookkeeping: safety timer is cancel-and-replace, and an explicit
+# volume command commits (nothing may restore over it)
 p = fake_player()
 p.duck()
-assert p.sp.vol == 15
+assert p.sp.vol == 15 and p._duck_timer is not None
+old_timer = p._duck_timer
+p.duck()  # second wake: stale timer must be cancelled, not left to fire
+assert old_timer.finished.is_set() or not old_timer.is_alive()
 p.unduck()
-assert p.sp.vol == 50
+assert p.sp.vol == 50 and p._duck_timer is None
 p.unduck()  # idempotent
+p.duck()
+p.commit_volume()
+assert p._ducked is None and p._duck_timer is None
+p.unduck()
+assert p.sp.vol == 15  # nothing restored: user's volume choice stands
 
 assert fake_player().handle("play_track", "anything") == "No results for 'anything'"
 assert fake_player(device=False).handle("play_track", "x") == NO_DEVICE

@@ -2,6 +2,7 @@
 import difflib
 import random
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -13,7 +14,7 @@ SCOPES = ("user-modify-playback-state user-read-playback-state "
           "playlist-read-private user-library-read user-top-read")
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 NO_DEVICE = "No Spotify device found - open Spotify on any device first."
-_POOL = ThreadPoolExecutor(max_workers=4)  # concurrent search variants
+_POOL = ThreadPoolExecutor(max_workers=8)  # searches + device prep in parallel
 
 
 def _norm(s):
@@ -151,19 +152,35 @@ class Player:
         self._titles_cache = titles
         return titles
 
-    def _snapshot(self):
-        """Remember what's playing so 'put it back' can restore it."""
+    def _prep(self):
+        """ONE round trip that both snapshots what's playing (for put_back)
+        and resolves the target device - run in parallel with the search so
+        neither adds to command latency."""
+        pb = None
         try:
             pb = self.sp.current_playback()
-            if pb and pb.get("item"):
-                self._undo = {
-                    "context": (pb.get("context") or {}).get("uri"),
-                    "track": pb["item"]["uri"],
-                    "name": pb["item"]["name"],
-                    "pos": pb.get("progress_ms") or 0,
-                }
         except Exception:
             pass
+        if pb and pb.get("item"):
+            self._undo = {
+                "context": (pb.get("context") or {}).get("uri"),
+                "track": pb["item"]["uri"],
+                "name": pb["item"]["name"],
+                "pos": pb.get("progress_ms") or 0,
+            }
+        if pb and pb.get("device"):
+            dev = pb["device"]["id"]
+        else:
+            try:
+                devices = self.sp.devices()["devices"]
+            except Exception:
+                devices = []
+            if not devices:
+                return None
+            dev = devices[0]["id"]
+            self.sp.transfer_playback(dev, force_play=False)
+        self._dev_cache = (time.monotonic(), dev)
+        return dev
 
     def put_back(self):
         undo = getattr(self, "_undo", None)
@@ -183,17 +200,30 @@ class Player:
 
     def duck(self):
         """Quiet the music while the user speaks a command (speaker setups
-        drown the mic otherwise). Remembers the level for unduck()."""
+        drown the mic otherwise). Owns its own safety timer: cancel-and-replace
+        so a stale timer from a previous wake can never restore volume while
+        the current command is still being spoken."""
+        t = getattr(self, "_duck_timer", None)
+        if t:
+            t.cancel()
         try:
             pb = self.sp.current_playback()
             vol = pb["device"]["volume_percent"] if pb and pb.get("device") else None
             if vol is not None and vol >= 30 and pb["device"]["id"]:
                 self._ducked = (vol, pb["device"]["id"])
                 self.sp.volume(15, device_id=pb["device"]["id"])
+                timer = threading.Timer(15, self.unduck)
+                timer.daemon = True
+                self._duck_timer = timer
+                timer.start()
         except Exception:
             pass
 
     def unduck(self):
+        t = getattr(self, "_duck_timer", None)
+        if t:
+            t.cancel()
+            self._duck_timer = None
         ducked = getattr(self, "_ducked", None)
         self._ducked = None
         if ducked:
@@ -201,6 +231,15 @@ class Player:
                 self.sp.volume(ducked[0], device_id=ducked[1])
             except Exception:
                 pass
+
+    def commit_volume(self):
+        """After an explicit volume command: forget the pre-duck level so
+        nothing restores over the user's choice."""
+        t = getattr(self, "_duck_timer", None)
+        if t:
+            t.cancel()
+            self._duck_timer = None
+        self._ducked = None
 
     def _artist_tracks(self, query):
         """When the query names an artist ('x by green day'), that artist's
@@ -258,11 +297,11 @@ class Player:
             score(q, i["name"], (), i.get("popularity", 0)) for q in _queries(query)))
 
     def _play_context(self, name, kind):
-        self._snapshot()
-        dev = self._device()
+        prep = _POOL.submit(self._prep)
+        item = self._search(name, kind)
+        dev = prep.result()
         if not dev:
             return NO_DEVICE
-        item = self._search(name, kind)
         if not item:
             return f"No {kind} found for '{name}'"
         self.sp.start_playback(device_id=dev, context_uri=item["uri"])
@@ -276,11 +315,11 @@ class Player:
 
     # -- commands ---------------------------------------------------------
     def play_track(self, query):
-        self._snapshot()
-        dev = self._device()
+        prep = _POOL.submit(self._prep)
+        t = self._best_track(query)
+        dev = prep.result()
         if not dev:
             return NO_DEVICE
-        t = self._best_track(query)
         if not t:
             return f"No results for '{query.replace('|', ' / ')}'"
         self.sp.start_playback(device_id=dev, uris=[t["uri"]])
@@ -293,12 +332,13 @@ class Player:
         return self._play_context(name, "album")
 
     def queue_track(self, query):
-        dev = self._device()
+        dev_f = _POOL.submit(self._device)  # no snapshot: the queue isn't a context change
+        t = self._best_track(query)
+        dev = dev_f.result()
         if not dev:
             return NO_DEVICE
-        t = self._best_track(query)
         if not t:
-            return f"No results for '{query}'"
+            return f"No results for '{query.replace('|', ' / ')}'"
         self.sp.add_to_queue(t["uri"], device_id=dev)
         return f"Queued {t['name']} by {t['artists'][0]['name']}"
 
@@ -318,18 +358,18 @@ class Player:
         """Your own playlists first (public search can't see private ones),
         then public search. 'Liked songs' feels like a playlist to users but
         isn't one to Spotify - route it."""
-        self._snapshot()
         names = _queries(name)
         if any(_sim(_norm(n), "liked songs") >= 0.7 for n in names):
             return self.play_liked()
-        dev = self._device()
-        if not dev:
-            return NO_DEVICE
+        prep = _POOL.submit(self._prep)
 
         def best_score(p):
             return max(_pl_score(n, p["name"]) for n in names)
 
         mine = self._my_playlists()
+        dev = prep.result()
+        if not dev:
+            return NO_DEVICE
         if mine:
             best = max(mine, key=best_score)
             if best_score(best) >= 0.55:
@@ -343,11 +383,11 @@ class Player:
         return res
 
     def play_liked(self):
-        self._snapshot()
-        dev = self._device()
+        prep = _POOL.submit(self._prep)
+        items = self.sp.current_user_saved_tracks(limit=50)["items"]
+        dev = prep.result()
         if not dev:
             return NO_DEVICE
-        items = self.sp.current_user_saved_tracks(limit=50)["items"]
         if not items:
             return "No liked songs found"
         uris = [i["track"]["uri"] for i in items]

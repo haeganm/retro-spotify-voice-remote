@@ -66,8 +66,9 @@ INTENTS = [
     # "liked" is heard as "like"/"light" constantly
     _i(r"play (?:my )?(?:(?:liked?|light|favou?rite|saved) (?:songs?|tracks?|music)|favou?rites?|likes)", "play_liked"),
     _i(r"put it back|go back to what was playing|play what was (?:playing |on )?before|undo(?: that)?", "put_back"),
-    # "queue" decodes as its homophones constantly
-    _i(r"(?:(?:queue|que|cue|q)(?: up)?|add) (.+?)(?: to (?:the |my )?(?:queue|que|cue|q))?", "queue_track", lambda m: m.group(1)),
+    # "queue" decodes as its homophones constantly ("you"/"do" are log-observed;
+    # safe because intents only parse right after the wake word)
+    _i(r"(?:(?:queue|que|cue|q|you|do)(?: up)?|add) (.+?)(?: to (?:the |my )?(?:queue|que|cue|q))?", "queue_track", lambda m: m.group(1)),
     _i(r"play (.+) next", "queue_track", lambda m: m.group(1)),
     # "play X by Y" goes to Spotify search as-is: splitting on "by" would break
     # titles like "stand by me"; player retries without "by" if search misses.
@@ -111,7 +112,8 @@ _CONTROLS = {"pause": ("pause", None), "stop": ("pause", None),
 def parse(text):
     """Return (action, arg) or None if the utterance isn't a known command."""
     text = text.lower().strip()
-    text = re.sub(r"^place\b", "play", text)  # "play s..." often decodes as "place s..."
+    # "play" decodes as these constantly (log-observed)
+    text = re.sub(r"^(?:place|clay|played)\b", "play", text)
     intent = _match(text)
     if intent is None and defill(text) != text:
         intent = _match(defill(text))  # second chance without edge noise
@@ -269,6 +271,7 @@ class Listener:
             hinted = False  # one wake hint per utterance
             utt = bytearray()  # raw audio of the current utterance, for Whisper
             fed = 0  # samples fed to this recognizer (maps word times to utt)
+            warm = time.time()  # last Whisper use, for the keep-warm pulse
             try:
                 stream = sd.RawInputStream(samplerate=16000, blocksize=4000,
                                            dtype="int16", channels=1, callback=cb,
@@ -282,6 +285,15 @@ class Listener:
                 continue
             with stream:
                 while not (stop.is_set() or self.restart.is_set()):
+                    # laptop GPUs sleep when idle and take seconds (log showed
+                    # 14-24s stalls) to wake a cold CUDA context: a tiny decode
+                    # every minute keeps it hot
+                    if self.transcriber and time.time() - warm > 60:
+                        warm = time.time()
+                        try:
+                            self.transcriber(b"\x00" * 6400)
+                        except Exception:
+                            pass
                     try:
                         data = q.get(timeout=0.5)
                     except queue.Empty:

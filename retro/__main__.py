@@ -251,7 +251,7 @@ def main():
             msg = player.handle(*intent)
             log(f"cmd: {text!r} -> {intent} -> {msg!r}")
             if intent[0] in VOLUME_ACTIONS:
-                player._ducked = None  # user set a volume: don't override it
+                player.commit_volume()  # user set a volume: don't restore over it
             else:
                 player.unduck()
             if (cfg["notify"] == "smart" and intent[0] != "now_playing"
@@ -271,7 +271,6 @@ def main():
             play_wav("wake.wav")
         if cfg["duck"]:
             threading.Thread(target=player.duck, daemon=True).start()
-            threading.Timer(10, player.unduck).start()  # safety restore
 
     listener = voice.Listener(
         model, cfg["wake_phrase"], on_command,
