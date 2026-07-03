@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/haeganm/retro/actions/workflows/ci.yml"><img src="https://github.com/haeganm/retro/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/license-PolyForm%20NC-blue" alt="License: PolyForm Noncommercial">
+  <img src="https://img.shields.io/badge/license-PolyForm%20Strict-blue" alt="License: PolyForm Strict">
   <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-blue" alt="Python 3.10-3.12">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6" alt="Windows 10/11">
   <img src="https://img.shields.io/badge/cost-%240-1ed760" alt="$0">
@@ -244,9 +244,10 @@ shortcut (plus tray → "Start with Windows" off, or delete the Startup shortcut
 
 ## License & credits
 
-**PolyForm Noncommercial 1.0.0** — see [LICENSE](LICENSE). Free to use,
-study, modify, and share for **personal and other noncommercial purposes**;
-commercial use is not permitted. For commercial licensing, open an issue.
+**PolyForm Strict 1.0.0** — see [LICENSE](LICENSE). You're welcome to use
+Retro as-is for **personal and other noncommercial purposes**, and to read
+and learn from the source. Commercial use, redistribution, and derivative
+works require written permission — open an issue to ask (I'm reasonable).
 Copyright (C) 2026 Haegan McGarry.
 
 Built on [Vosk](https://alphacephei.com/vosk/) (Apache-2.0),
