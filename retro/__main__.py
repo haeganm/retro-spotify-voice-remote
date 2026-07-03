@@ -10,7 +10,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from . import osd, stt, voice
+from . import osd, stt, voice, winaudio
 from .player import Player
 
 MODELS = {  # name -> (folder, approx size) at https://alphacephei.com/vosk/models
@@ -339,6 +339,7 @@ def main():
     mic_index, mic_name = pick_input(cfg["input_device"])
     print(f"Microphone: {mic_name}")
     log(f"mic: {mic_name!r} (index {mic_index})")
+    bt_mic = any(k in mic_name.lower() for k in ("headset", "hands-free", "bthhfenum"))
 
     listener = voice.Listener(
         model, cfg["wake_phrase"], on_command,
@@ -370,15 +371,29 @@ def main():
     def toggle(icon_, item):
         listening.clear() if listening.is_set() else listening.set()
 
+    def route_headset_output(family):
+        """Bluetooth mics kill the hi-fi output; keep sound flowing by moving
+        the system default output to the headset-quality endpoint (and back)."""
+        def work():
+            name = winaudio.route_output_to_headset(family)
+            if name:
+                log(f"audio: default output -> {name!r}")
+                notify(f"Audio continues via {name} (phone quality while mic is on)")
+        threading.Thread(target=work, daemon=True).start()
+
     def pick_mic(family):  # None = auto (probe everything)
         def do(icon_, item):
             cfg["input_device"] = family  # family name: we probe its endpoints
             save_config(d, cfg)
             switches[0] = 0
+            winaudio.restore_output()  # leaving a previous Bluetooth selection
             idx, name = pick_input(family)
             log(f"mic: user picked {family!r} -> {name!r} (index {idx})")
             listener.device = idx
             listener.restart.set()
+            if family and ("headset" in name.lower() or "hands-free" in name.lower()
+                           or "bthhfenum" in name.lower()):
+                route_headset_output(family)
         return do
 
     def mic_items():
@@ -407,6 +422,7 @@ def main():
         notify("Token cleared - restart Spotify Retro to sign in again.")
 
     def quit_(icon_, item):
+        winaudio.restore_output()  # never leave the system on the phone-quality output
         stop.set()
         icon.stop()
 
@@ -452,6 +468,8 @@ def main():
 
     threading.Thread(target=run_listener, daemon=True).start()
     threading.Thread(target=load_whisper, daemon=True).start()
+    if cfg["input_device"] and bt_mic:  # resumed on a Bluetooth mic: keep audio flowing
+        route_headset_output(cfg["input_device"])
 
     print(f'Running in the tray. Say "{cfg["wake_phrase"]}" then a command, '
           f'or "{cfg["wake_phrase"]}, play <song>" in one breath.')
