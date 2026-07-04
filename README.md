@@ -237,6 +237,7 @@ See [SECURITY.md](SECURITY.md) for the full threat model.
 | It mishears commands | `retro --misses` lists everything it failed to parse; `%APPDATA%\Retro\retro.log` shows exactly what each engine heard |
 | "No Spotify device found" | Open Spotify on any device — this is a remote, not a player |
 | Music goes quiet/mono on a Bluetooth headset mic | Windows can't do hi-fi audio + headset mic at once; the app keeps sound flowing on the headset channel and restores hi-fi when you switch mics. Use Automatic (a wired/built-in mic) for full quality |
+| Discord/Zoom voice breaks while Retro runs | A Bluetooth headset has only ONE mic channel — if Retro is set to the headset mic, it holds that channel 24/7 and calls can't use it. Switch Retro to **Automatic** (tray → Microphone) so it listens via a built-in/wired mic and your headset stays free for calls |
 | Commands need Premium | The Spotify playback API rejects free accounts |
 
 Uninstall: delete the repo folder, `%APPDATA%\Retro`, and the desktop
