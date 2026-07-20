@@ -1,7 +1,7 @@
 <p align="center"><img src="docs/banner.png" alt="Retro - personalized voice music remote" width="100%"></p>
 
 <p align="center">
-  <a href="https://github.com/haeganm/retro/actions/workflows/ci.yml"><img src="https://github.com/haeganm/retro/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/haeganm/retro-spotify-voice-remote/actions/workflows/ci.yml"><img src="https://github.com/haeganm/retro-spotify-voice-remote/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/license-PolyForm%20Strict-blue" alt="License: PolyForm Strict">
   <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-blue" alt="Python 3.10-3.12">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6" alt="Windows 10/11">
@@ -72,8 +72,8 @@ winget install Python.Python.3.12
 **Step 2 — get Retro** (either way works):
 
 ```powershell
-git clone https://github.com/haeganm/retro
-cd retro
+git clone https://github.com/haeganm/retro-spotify-voice-remote
+cd retro-spotify-voice-remote
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
