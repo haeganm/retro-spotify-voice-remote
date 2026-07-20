@@ -16,8 +16,6 @@ device Spotify is already playing on — desktop, phone, speaker.
 
 > **"hey retro, play bohemian rhapsody"**
 
-<!-- demo GIF goes here: docs/demo.gif -->
-
 ## Why it's different
 
 - **It knows *your* music.** Your top artists, playlists, and liked songs are
