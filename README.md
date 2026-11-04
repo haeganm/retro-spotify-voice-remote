@@ -12,18 +12,18 @@
 
 A free, local voice remote **for Spotify Premium**. Runs in your system tray,
 listens offline (speech never leaves your machine), and controls whatever
-device Spotify is already playing on — desktop, phone, speaker.
+device Spotify is already playing on - desktop, phone, speaker.
 
 > **"hey retro, play bohemian rhapsody"**
 
 ## Why it's different
 
 - **It knows *your* music.** Your top artists, playlists, and liked songs are
-  injected into the recognizer's vocabulary and boosted in search ranking — so
+  injected into the recognizer's vocabulary and boosted in search ranking - so
   niche artist names and personal playlist names ("7.0", spoken as
   "seven point o") resolve correctly when generic assistants fail.
 - **It forgives how people actually talk.** Two speech engines hear every
-  command and their transcriptions *compete* in a fuzzy-ranked search — a
+  command and their transcriptions *compete* in a fuzzy-ranked search - a
   garbled "play money to work by eat" still finds *Money Twërk by Yeat*.
   Control words ("skip", "pause") dispatch instantly with zero transcription
   latency.
@@ -56,18 +56,18 @@ Everything left of the Spotify API runs offline on your machine.
 - Python 3.10–3.12 (`winget install Python.Python.3.12` if you don't have it)
 - A microphone
 - Spotify open on at least one device (the API commands a device; it doesn't produce audio)
-- An NVIDIA GPU is optional — the installer detects one and enables faster,
+- An NVIDIA GPU is optional - the installer detects one and enables faster,
   more accurate recognition automatically
 
 ## Install ($0, ~5 minutes)
 
-**Step 1 — get Python** (skip if you have 3.10-3.12):
+**Step 1 - get Python** (skip if you have 3.10-3.12):
 
 ```powershell
 winget install Python.Python.3.12
 ```
 
-**Step 2 — get Retro** (either way works):
+**Step 2 - get Retro** (either way works):
 
 ```powershell
 git clone https://github.com/haeganm/retro-spotify-voice-remote
@@ -83,12 +83,12 @@ The installer creates an isolated environment (nothing touches your system
 Python), installs the tested dependency set, enables GPU acceleration if you
 have an NVIDIA card, and puts a **Retro** icon on your desktop.
 
-**Step 3 — connect your Spotify** (one time):
+**Step 3 - connect your Spotify** (one time):
 
 1. Go to <https://developer.spotify.com/dashboard>, log in with your Spotify
    account, and click **Create app**:
    - App name / description: anything ("Retro" works)
-   - **Redirect URI** (must be exact): `http://127.0.0.1:8888/callback` — click **Add**
+   - **Redirect URI** (must be exact): `http://127.0.0.1:8888/callback` - click **Add**
    - API: **Web API** → Save
 2. On the app's **Settings** page, copy the **Client ID**.
 3. Double-click the **Retro** icon on your desktop, paste the Client ID into
@@ -106,14 +106,14 @@ retro                # console entry point
 ```
 </details>
 
-## Using the remote — read this first
+## Using the remote - read this first
 
 > **Retro is a remote control, not a chatbot.** It matches *specific command
-> patterns* — it cannot chat, answer questions, or figure out "play something
+> patterns* - it cannot chat, answer questions, or figure out "play something
 > chill for studying". Stick to the phrases below and it's fast and reliable;
 > freestyle and it will say *"didn't catch that"*.
 
-**The rhythm:** say the wake phrase, then the command —
+**The rhythm:** say the wake phrase, then the command:
 
 - **One breath** (fastest): *"hey retro, play bohemian rhapsody"*
 - **Two-step**: say *"hey retro"*, wait for the **chime**, then speak the
@@ -141,21 +141,21 @@ corner overlay and tray-icon tooltip show exactly what it did.
 | `set volume to fifty` | volume 0-100 |
 | `what's playing` | show the current track |
 | `shuffle on` / `shuffle off` | shuffle |
-| `put it back` / `go back to what was playing` | undo — restore what was playing before |
+| `put it back` / `go back to what was playing` | undo - restore what was playing before |
 
 ### Getting the best recognition
 
 - **Include the artist for anything that isn't famous**: *"play brain stew by
   green day"* beats *"play brain stew"*. Title + artist is the single biggest
   accuracy win.
-- **Speak at a normal pace** and let the sentence end — Retro processes when
+- **Speak at a normal pace** and let the sentence end - Retro processes when
   you stop talking (about half a second of silence).
 - Say **the actual title**, not a description. "play that one from the gym
   playlist" won't work; "playlist gym" will.
 - Control words ("skip", "pause") respond instantly; song searches take a
   moment (speech transcription + Spotify search).
 - If it keeps mishearing a phrase, run `retro --misses` to see what it
-  actually heard — the transcript log (`%APPDATA%\Retro\retro.log`) shows
+  actually heard - the transcript log (`%APPDATA%\Retro\retro.log`) shows
   both recognition engines' hearings for every command.
 - Test any command without speaking: `retro --say "play daft punk"`.
 
@@ -231,11 +231,11 @@ See [SECURITY.md](SECURITY.md) for the full threat model.
 
 | Symptom | Do this |
 |---|---|
-| It never hears the wake word | `retro --mic-test` — speak while it runs; pick the mic with the biggest bar (tray → Microphone), or leave it on Automatic |
+| It never hears the wake word | `retro --mic-test` - speak while it runs; pick the mic with the biggest bar (tray → Microphone), or leave it on Automatic |
 | It mishears commands | `retro --misses` lists everything it failed to parse; `%APPDATA%\Retro\retro.log` shows exactly what each engine heard |
-| "No Spotify device found" | Open Spotify on any device — this is a remote, not a player |
+| "No Spotify device found" | Open Spotify on any device - this is a remote, not a player |
 | Music goes quiet/mono on a Bluetooth headset mic | Windows can't do hi-fi audio + headset mic at once; the app keeps sound flowing on the headset channel and restores hi-fi when you switch mics. Use Automatic (a wired/built-in mic) for full quality |
-| Discord/Zoom voice breaks while Retro runs | A Bluetooth headset has only ONE mic channel — if Retro is set to the headset mic, it holds that channel 24/7 and calls can't use it. Switch Retro to **Automatic** (tray → Microphone) so it listens via a built-in/wired mic and your headset stays free for calls |
+| Discord/Zoom voice breaks while Retro runs | A Bluetooth headset has only ONE mic channel - if Retro is set to the headset mic, it holds that channel 24/7 and calls can't use it. Switch Retro to **Automatic** (tray → Microphone) so it listens via a built-in/wired mic and your headset stays free for calls |
 | Commands need Premium | The Spotify playback API rejects free accounts |
 
 Uninstall: delete the repo folder, `%APPDATA%\Retro`, and the desktop
@@ -243,13 +243,13 @@ shortcut (plus tray → "Start with Windows" off, or delete the Startup shortcut
 
 ## License & credits
 
-**PolyForm Strict 1.0.0** — see [LICENSE](LICENSE). You're welcome to use
+**PolyForm Strict 1.0.0**: see [LICENSE](LICENSE). You're welcome to use
 Retro as-is for **personal and other noncommercial purposes**, and to read
 and learn from the source. Commercial use, redistribution, and derivative
-works require written permission — open an issue to ask (I'm reasonable).
+works require written permission - open an issue to ask (I'm reasonable).
 Copyright (C) 2026 Haegan McGarry.
 
-The license covers **everything in this repository** — code, docs, logo,
+The license covers **everything in this repository** - code, docs, logo,
 banner, and audio assets alike; see [NOTICE](NOTICE) for the plain-language
 summary.
 
@@ -259,6 +259,6 @@ Built on [Vosk](https://alphacephei.com/vosk/) (Apache-2.0),
 
 ---
 
-*Retro is an independent project — not affiliated with, endorsed by, or
+*Retro is an independent project - not affiliated with, endorsed by, or
 sponsored by Spotify AB. Spotify is a trademark of Spotify AB. Requires a
 user-created Spotify developer application and a Spotify Premium account.*
